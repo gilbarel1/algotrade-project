@@ -12,7 +12,8 @@ Read `docs/design.md` in full at the start of every session before writing or ch
 2. **Stop and wait for review after every step.** Do not start the next step until the reviewer explicitly says to proceed.
 3. **The design doc is the source of truth.** Implement strictly against `docs/design.md`. Do not invent endpoints, fields, tables, parameters, or libraries that are not in the doc. If code and doc ever conflict, the doc wins.
 4. **If something is ambiguous or looks wrong, ask — do not guess.** Surface the question in your report and stop.
-5. **Every step must be runnable and verifiable.** A step is not "done" until there is a concrete way to test it and confirm it matches the design.
+5. **If manual actions / human verifications are needed during the build - stop and ask.** - do not continue until all required actions are done.
+6. **Every step must be runnable and verifiable.** A step is not "done" until there is a concrete way to test it and confirm it matches the design.
 
 ---
 
