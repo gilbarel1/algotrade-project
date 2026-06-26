@@ -1,0 +1,70 @@
+{# Report template skeleton (§8.1). Block placeholders only — filled in Step 9. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>TA-35 Investment Report — {{ run_id | default("run_id") }}</title>
+  <link rel="stylesheet" href="report.css">
+</head>
+<body>
+
+  {# 1. Header — run id, timestamp (Asia/Jerusalem), watchlist, mode #}
+  <header class="report-header">
+    <h1>TA-35 Investment Recommendation Report</h1>
+    <!-- TODO Step 9: run_id, timestamp (Asia/Jerusalem), watchlist, mode -->
+  </header>
+
+  {# 2. Executive summary — counts + top three highest-conviction calls #}
+  <section class="exec-summary">
+    <h2>Executive Summary</h2>
+    <!-- TODO Step 9: long/short/hold/avoid counts; top 3 calls with one-line rationales -->
+  </section>
+
+  {# 3. Per-ticker section — one page per ticker #}
+  {% for rec in recommendations | default([]) %}
+  <section class="ticker-page">
+    <h2>{{ rec.ticker | default("TICKER") }}</h2>
+
+    {# Recommendation badge + conviction #}
+    <!-- TODO Step 9: recommendation badge, conviction -->
+
+    {# Three agent panels #}
+    <div class="agent-panels">
+      <div class="panel sentiment">
+        <h3>Sentiment</h3>
+        <!-- TODO Step 9: both scores side-by-side, disagreement, top articles + citations -->
+      </div>
+      <div class="panel earnings">
+        <h3>Earnings</h3>
+        <!-- TODO Step 9: disclosure title, Maya link, figures with confidence markers (ambiguous distinct) -->
+      </div>
+      <div class="panel technical">
+        <h3>Technical</h3>
+        <!-- TODO Step 9: indicator snapshot + signal -->
+      </div>
+    </div>
+
+    {# Reasoning trace — draft / critique / final (headline differentiator) #}
+    <div class="reasoning-trace">
+      <h3>Reasoning Trace</h3>
+      <!-- TODO Step 9: draft, critique objections, final decision -->
+    </div>
+
+    {# Price chart thumbnail — 90-day close + 20/50-day MAs #}
+    <div class="price-chart">
+      <!-- TODO Step 9: PNG thumbnail from quant service -->
+    </div>
+  </section>
+  {% endfor %}
+
+  {# 4. Methodology footer #}
+  <footer class="methodology">
+    <h2>Methodology</h2>
+    <!-- TODO Step 9: decision rubric, dual-sentiment threshold, critique-loop description -->
+    <p class="disclaimer">
+      This report is educational and not investment advice.
+    </p>
+  </footer>
+
+</body>
+</html>

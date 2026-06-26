@@ -1,0 +1,47 @@
+# Risk Manager decision rubric thresholds (§3.4).
+# These are the defaults the three-stage critique loop applies. The design doc (§3.4)
+# is the source of truth; this file makes the thresholds configurable without code edits.
+
+# Directional mapping (§3.4) — maps each agent's output to bullish / bearish / neutral.
+directional:
+  sentiment:
+    # Sentiment is bullish if max(llm, model) >= bullish_threshold,
+    # bearish if min(llm, model) <= bearish_threshold, neutral otherwise.
+    bullish_threshold: 0.2
+    bearish_threshold: -0.2
+  technical:
+    bullish_signals: ["bullish_momentum", "oversold"]
+    bearish_signals: ["bearish_momentum", "overbought"]
+    neutral_signals: ["neutral"]
+  # Earnings direction is LLM-classified (positive surprise / raised guidance => bullish;
+  # miss / cut guidance => bearish; otherwise neutral) — no numeric threshold.
+
+# Strong signal flags (§3.4) — the draft pass needs at least one to pick a side at all,
+# and `short` requires at least one strong bearish signal.
+strong_signal:
+  sentiment_abs_threshold: 0.4          # |llm_sentiment| >= 0.4 or |model_sentiment| >= 0.4
+  technical_strong_signals: ["overbought", "oversold"]
+  earnings_high_materiality_within_window: true   # materiality == high within earnings_window_days
+
+# Agreement rule (§3.4) — number of agents agreeing with the candidate side -> conviction.
+agreement:
+  three_of_three: "high"
+  two_of_three: "medium"
+  one_or_fewer: "hold"                  # no non-hold call permitted
+
+# avoid is reserved for >= 2 degraded agents (insufficient evidence), never a directional call.
+avoid_min_degraded_agents: 2
+
+# Conviction caps (§3.4), applied after the agreement count.
+conviction_caps:
+  earnings_event:
+    # materiality == high within earnings_window_days caps conviction at medium.
+    enabled: true
+    cap: "medium"
+  dual_sentiment:
+    # disagreement > threshold caps conviction at medium and the report notes the split.
+    disagreement_threshold: 0.3
+    cap: "medium"
+  degraded_agent:
+    # any single degraded agent caps conviction at medium.
+    single_agent_cap: "medium"

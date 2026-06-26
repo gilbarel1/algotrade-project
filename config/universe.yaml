@@ -1,0 +1,9 @@
+watchlist: ["TEVA.TA","NICE.TA","LUMI.TA","POLI.TA","ESLT.TA"]
+news_window_minutes: 120
+earnings_window_days: 5
+ohlc_lookback_days: 180
+# Cron is evaluated in n8n's TZ setting; set TZ=Asia/Jerusalem (§11.1) so this reads as local.
+# Sun–Thu, hourly from 10:00 to 17:00 local time (covers TASE continuous trading ~09:30–17:25 IDT/IST).
+# Day-of-week: 0=Sunday in n8n cron. DST is handled by the TZ setting, not the cron expression.
+schedule_cron: "0 10-17 * * 0-4"
+report_dir: "reports"

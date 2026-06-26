@@ -1,0 +1,23 @@
+# Secrets
+.env
+
+# DuckDB store
+*.duckdb
+*.duckdb.wal
+
+# Generated reports
+reports/
+
+# Hugging Face model cache
+.hf_cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env.local
+
+# OS / editor
+.DS_Store
