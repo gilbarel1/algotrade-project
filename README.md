@@ -77,6 +77,7 @@ algotrade-project/
 │   ├── ops/                    #   cost_log, cost_report             (observability)
 │   ├── templates/              #   report.html.j2 + report.css        (Jinja2 → PDF)
 │   ├── store_init.py           #   create the DuckDB schema (run once)
+│   ├── ingest.py               #   pull + clean watchlist OHLC → prices cache (Step 1)
 │   ├── smoke_test.py           #   cross-platform endpoint check
 │   ├── store.duckdb            #   local cache/persistence (gitignored)
 │   └── requirements.txt
@@ -107,8 +108,10 @@ below for which step owns what.
 
 ## Setup & quick start
 
-> Current state: the quant service returns **stub responses matching the §5 contracts** so
-> the integration is verifiable before any real logic exists (Step 0 — scaffold).
+> Current state (through **Step 1**): the four endpoints still return **stub responses
+> matching the §5 contracts** (made real in Step 2), while **`ingest.py` already pulls and
+> cleans real TA-35 OHLC into DuckDB** (§4.1, §4.3). Both are verifiable without n8n or any
+> API keys.
 
 ### 1. Clone and create a virtualenv
 
@@ -126,11 +129,14 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-`requirements.txt` lists the **full** stack (used by later steps). To verify Steps 0–2 you
-only need the core subset:
+`requirements.txt` lists the **full** stack (used by later steps). To stand up the skeleton
+(Step 0) you only need the core subset; **Step 1 ingestion** adds the data libraries:
 
 ```bash
+# Step 0 — stub endpoints:
 pip install fastapi "uvicorn[standard]" "pydantic>=2" duckdb pyyaml jinja2
+# Step 1 — real OHLC ingestion also needs:
+pip install yfinance certifi pandas numpy
 ```
 
 ### 3. Configure environment
@@ -201,6 +207,38 @@ curl -s -X POST localhost:8000/report     -H "content-type: application/json" -d
 
 Each response should match the corresponding §5 example shape in `docs/design.md`.
 
+### 7. Ingest real market data (Step 1)
+
+With the schema in place, pull and clean the watchlist's daily OHLC into the `prices` cache.
+The watchlist and lookback come from `config/universe.yaml` (§4.4); the §4.3 cleaning rules
+(adjusted close, TASE Sun–Thu calendar alignment, one-day-gap forward-fill, 8×MAD outlier
+flagging) are applied automatically. **No API key needed** — Yahoo Finance is keyless.
+
+```bash
+cd quant_service
+python ingest.py                         # full watchlist: TEVA, NICE, LUMI, POLI, ESLT (.TA)
+#   python ingest.py --symbols TEVA.TA   # one or more explicit symbols
+#   python ingest.py --lookback-days 90  # override the 180-day default
+```
+
+Expect one row per symbol with `fetched / written / filled / dropped` counts and a date
+range (e.g. `178 rows  2025-10-09 … 2026-06-25`), then `Total in prices: N rows`. A
+`DEGRADED — <reason>` line means an external failure — **no data is fabricated** (§9.4);
+just re-run later. (`written` can exceed `fetched`: stale weekend rows are dropped and
+single-day gaps are forward-filled onto the Sun–Thu grid.)
+
+**Inspect what landed** (read-only, safe while nothing else holds the DB open):
+
+```bash
+python -c "import duckdb; con=duckdb.connect('store.duckdb', read_only=True); print(con.sql('SELECT symbol, count(*) AS n, min(ts) AS first, max(ts) AS last FROM prices GROUP BY symbol ORDER BY symbol'))"
+```
+
+Or browse interactively with the DuckDB CLI (`winget install DuckDB.cli`):
+
+```bash
+duckdb store.duckdb        # then:  SELECT * FROM prices LIMIT 20;   (Ctrl-D to exit)
+```
+
 ---
 
 ## Configuration & API keys
@@ -217,7 +255,7 @@ the build reaches the step that uses them:
 |---|---|---|
 | `OPENROUTER_API_KEY` | Step 3 (first LLM call) | <https://openrouter.ai> → sign up → **Keys** → create key. Pay-as-you-go; a few dollars covers many runs. |
 | `NEWSAPI_API_KEY` | Step 5 (Sentiment Agent) | <https://newsapi.org/register> → free tier (100 req/day). |
-| `ALPHAVANTAGE_API_KEY` | Step 1/2 backup (optional) | <https://www.alphavantage.co/support/#api-key> → free (25 req/day). Optional; Yahoo Finance is primary. |
+| `ALPHAVANTAGE_API_KEY` | — (not usable) | Listed in the design as the OHLC backup, but **verified to have no TASE (`*.TA`) coverage** (free tier; `TEVA.TLV`/`.TA` → *"Invalid API call"*, and adjusted data is premium). Yahoo Finance is the only working source for this watchlist — safe to leave blank. See [Step 1 notes](#known-gotchas). |
 | `QUANT_SERVICE_URL` | Step 3 (n8n → service) | Leave `http://localhost:8000` for local; use `http://host.docker.internal:8000` if n8n runs in Docker. |
 | `DUCKDB_PATH` | Step 1 | Leave default `quant_service/store.duckdb`. |
 | `REPORT_DIR` | Step 9 | Leave default `reports`. |
@@ -233,7 +271,7 @@ The system is built and reviewed **one step at a time** (full detail in `CLAUDE.
 | Step | What | Status |
 |---|---|---|
 | 0 | Scaffold: repo layout, FastAPI stubs, DuckDB schema, config, template skeleton | ✅ done |
-| 1 | Data ingestion: Yahoo OHLC + cleaning → `prices` | ⬜ |
+| 1 | Data ingestion: Yahoo OHLC + cleaning → `prices` (`python ingest.py`) | ✅ done |
 | 2 | `/ohlc` + `/indicators` real (`pandas-ta`) | ⬜ |
 | 3 | Technical Agent sub-workflow (n8n + Gemini Flash-Lite) | ⬜ |
 | 4 | `/sentiment` real (FinBERT + HeBERT) | ⬜ |
@@ -262,6 +300,19 @@ The system is built and reviewed **one step at a time** (full detail in `CLAUDE.
 
 - **PowerShell `curl`** is `Invoke-WebRequest`, not real curl — use `python smoke_test.py`,
   `Invoke-RestMethod`, or `curl.exe` (see the expandable section above).
+- **Corporate TLS proxy / antivirus (Step 1):** behind a TLS-inspecting proxy, `yfinance`'s
+  HTTP backend can fail certificate verification — and yfinance often surfaces it as a
+  *misleading* "Too Many Requests / rate limited" (it is **not** actually a rate limit). The
+  ingester auto-fixes this on Windows by trusting the OS certificate store
+  (`data/yahoo.py: configure_tls()` builds a `certifi` + Windows-root CA bundle) — **no action
+  needed**. On other OSes behind such a proxy, point `CURL_CA_BUNDLE` at your corporate CA
+  bundle before running `python ingest.py`.
+- **DuckDB CLI version:** the CLI can only open `store.duckdb` if its version matches the
+  Python `duckdb` library that wrote it. Check
+  `python -c "import duckdb; print(duckdb.__version__)"` and install the same CLI version (an
+  older CLI refuses with *"newer DuckDB"*).
+- **Single-writer DB:** close the DuckDB CLI / any open connection before running
+  `ingest.py`, or you'll get *"file is being used by another process."*
 - **Python 3.13 on Windows:** `pandas-ta` (Step 2) and `WeasyPrint` (Step 9, needs the GTK
   runtime) can need extra setup; we'll flag specifics when those steps land. Steps 0–1 are
   unaffected.

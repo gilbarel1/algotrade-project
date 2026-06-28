@@ -8,6 +8,7 @@ jinja2
 
 # Data ingestion + indicators (Steps 1-2)
 yfinance
+certifi           # base CA bundle; augmented with the OS store for curl_cffi TLS
 pandas
 numpy
 pandas-ta
