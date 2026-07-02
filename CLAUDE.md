@@ -19,6 +19,12 @@ Read `docs/design.md` in full at the start of every session before writing or ch
 
 ## Required report after each step
 
+After implementing a step and **before** writing this report, run the
+`step-review` skill (`.claude/skills/step-review/`): it checks the step's diff
+for design fidelity, guardrail compliance, and edge-case handling. Blocking
+findings are fixed before reporting; everything else lands in "Open questions /
+deviations".
+
 End every step with this summary, then stop:
 
 ```
