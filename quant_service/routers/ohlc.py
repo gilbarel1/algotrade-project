@@ -1,10 +1,16 @@
-"""POST /ohlc — cached daily/intraday OHLC for a symbol (§5).
+"""POST /ohlc — cached daily OHLC for a symbol (§5).
 
-Step 0: returns the hardcoded §5 stub. Real Yahoo Finance ingestion lands in Steps 1-2.
+Reads the DuckDB `prices` cache (§4.2) written by Step-1 ingestion, lazily
+ingesting on a cache miss (see `cache.get_cached_ohlc`). Serves the last
+`lookback_days` daily bars in the §5 contract shape. Intraday intervals are out
+of scope (Step 1 caches daily only); a non-`1d` interval returns an empty result
+rather than crashing.
 """
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+
+from data import cache
 
 router = APIRouter()
 
@@ -17,12 +23,50 @@ class OHLCRequest(BaseModel):
 
 @router.post("/ohlc")
 def ohlc(req: OHLCRequest):
+    if req.interval != "1d":
+        return {
+            "symbol": req.symbol,
+            "interval": req.interval,
+            "as_of": None,
+            "candles": [],
+            "summary": f"interval '{req.interval}' not supported; only daily (1d) is cached.",
+        }
+
+    con = cache.connect()
+    try:
+        df, degrade_reason = cache.get_cached_ohlc(
+            con, req.symbol, req.lookback_days
+        )
+    finally:
+        con.close()
+
+    if df.empty:
+        return {
+            "symbol": req.symbol,
+            "interval": "1d",
+            "as_of": None,
+            "candles": [],
+            "summary": f"degraded: {degrade_reason or 'no cached data'} — no bars available.",
+        }
+
+    candles = [
+        {
+            "ts": ts.strftime("%Y-%m-%d"),
+            "o": round(float(o), 4),
+            "h": round(float(h), 4),
+            "l": round(float(low), 4),
+            "c": round(float(c), 4),
+            "v": int(v),
+        }
+        for ts, o, h, low, c, v in zip(
+            df["ts"], df["open"], df["high"], df["low"], df["close"], df["volume"]
+        )
+    ]
+    as_of = candles[-1]["ts"]
     return {
-        "symbol": "TEVA.TA",
+        "symbol": req.symbol,
         "interval": "1d",
-        "as_of": "2026-06-22",
-        "candles": [
-            {"ts": "2026-06-20", "o": 31.1, "h": 31.6, "l": 30.9, "c": 31.4, "v": 1234567}
-        ],
-        "summary": "180 daily bars cached.",
+        "as_of": as_of,
+        "candles": candles,
+        "summary": f"{len(candles)} daily bars cached.",
     }

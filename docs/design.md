@@ -1,4 +1,5 @@
 # Technical Design Plan
+
 ## n8n-Based Multi-Agent System for Investment Decisions (TA-35)
 
 An automated workflow simulating a virtual investment team. Four specialist agents — Sentiment, Earnings, Technical, and Risk Manager — independently analyze a watchlist of TA-35 names; a coordinating workflow synthesizes their conclusions, runs a deliberate critique pass, and produces a justified buy / hold / sell recommendation as a detailed PDF report saved to disk.
@@ -133,6 +134,7 @@ This visibly demonstrates non-trivial prompt engineering, makes the model's reas
 **Decision rubric (defaults in `config/rubric.yaml`):**
 
 **Canonical enums (used by all agents, schemas, and the rubric):**
+
 - `recommendation ∈ {long, short, hold, avoid}`
 - `conviction ∈ {low, medium, high}`
 - Technical `signal ∈ {bullish_momentum, bearish_momentum, overbought, oversold, neutral}`
@@ -142,26 +144,27 @@ This visibly demonstrates non-trivial prompt engineering, makes the model's reas
 
 **Directional mapping** (used by the agreement rule below):
 
-| Agent | Bullish | Bearish | Neutral |
-|---|---|---|---|
-| Sentiment | `max(llm_sentiment, model_sentiment) ≥ 0.2` | `min(llm_sentiment, model_sentiment) ≤ -0.2` | otherwise |
-| Technical | `signal ∈ {bullish_momentum, oversold}` | `signal ∈ {bearish_momentum, overbought}` | `signal = neutral` |
-| Earnings | positive surprise / raised guidance (LLM-classified) | miss / cut guidance (LLM-classified) | otherwise |
+| Agent     | Bullish                                              | Bearish                                         | Neutral              |
+| --------- | ---------------------------------------------------- | ----------------------------------------------- | -------------------- |
+| Sentiment | `max(llm_sentiment, model_sentiment) ≥ 0.2`       | `min(llm_sentiment, model_sentiment) ≤ -0.2` | otherwise            |
+| Technical | `signal ∈ {bullish_momentum, oversold}`           | `signal ∈ {bearish_momentum, overbought}`    | `signal = neutral` |
+| Earnings  | positive surprise / raised guidance (LLM-classified) | miss / cut guidance (LLM-classified)            | otherwise            |
 
 **Strong signal flags** (used by the draft pass to pick a side at all):
 `|llm_sentiment| ≥ 0.4` or `|model_sentiment| ≥ 0.4`; technical `signal ∈ {overbought, oversold}`; earnings `materiality = high` within the last `earnings_window_days`.
 
 **Agreement rule.** Count agents whose directional mapping equals the candidate side (bullish for `long`, bearish for `short`).
 
-| Agents agreeing | Conviction |
-|---|---|
-| 3 of 3 | `high` |
-| 2 of 3 | `medium` |
-| ≤ 1 of 3 | `hold` (no non-`hold` call permitted) |
+| Agents agreeing | Conviction                                |
+| --------------- | ----------------------------------------- |
+| 3 of 3          | `high`                                  |
+| 2 of 3          | `medium`                                |
+| ≤ 1 of 3       | `hold` (no non-`hold` call permitted) |
 
 `short` requires at least one **strong** bearish signal in addition to the count. `avoid` is reserved for cases where `status = "degraded"` on two or more agents (insufficient evidence) — never confused with a directional call.
 
 **Conviction caps (applied after the count):**
+
 - **Earnings event cap.** `materiality = high` within `earnings_window_days` caps conviction at `medium` (event risk), regardless of agreement count.
 - **Dual-sentiment cap.** `disagreement > 0.3` caps conviction at `medium` and the report explicitly notes the LLM/model split.
 - **Degraded-agent cap.** Any single agent returning `status = "degraded"` caps conviction at `medium`; two or more degraded agents force `avoid` per the rule above.
@@ -172,14 +175,14 @@ This visibly demonstrates non-trivial prompt engineering, makes the model's reas
 
 ### 4.1 Sources
 
-| Need | Primary | Notes / limits | Backup |
-|---|---|---|---|
-| OHLC (daily + intraday) | Yahoo Finance via `yfinance` | Free; ~60d of 1–5m bars, ~730d of 1h bars | Alpha Vantage (25 req/day — cache hard) |
-| News (English) | NewsAPI | Free tier 100 req/day | Targeted RSS (Globes, Reuters, Bloomberg, Calcalist EN) |
-| News (Hebrew, fallback) | Ynet / Calcalist RSS | Free RSS; LLM translates | — |
-| Earnings disclosures | `maya.tase.co.il/en/reports/companies` (HTML) | Free, English where available | Hebrew Maya + LLM translation |
-| Market context | Yahoo Finance for `^TA125.TA`, `^GSPC`, `^VIX` | Free | — |
-| Fine-tuned sentiment | Hugging Face `ProsusAI/finbert` (EN), `avichr/heBERT_sentiment_analysis` (HE) | Local inference via `transformers` | — |
+| Need                    | Primary                                                                          | Notes / limits                             | Backup                                                  |
+| ----------------------- | -------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------- |
+| OHLC (daily + intraday) | Yahoo Finance via`yfinance`                                                    | Free; ~60d of 1–5m bars, ~730d of 1h bars | Alpha Vantage (25 req/day — cache hard)                |
+| News (English)          | NewsAPI                                                                          | Free tier 100 req/day                      | Targeted RSS (Globes, Reuters, Bloomberg, Calcalist EN) |
+| News (Hebrew, fallback) | Ynet / Calcalist RSS                                                             | Free RSS; LLM translates                   | —                                                      |
+| Earnings disclosures    | `maya.tase.co.il/en/reports/companies` (HTML)                                  | Free, English where available              | Hebrew Maya + LLM translation                           |
+| Market context          | Yahoo Finance for`^TA125.TA`, `^GSPC`, `^VIX`                              | Free                                       | —                                                      |
+| Fine-tuned sentiment    | Hugging Face`ProsusAI/finbert` (EN), `avichr/heBERT_sentiment_analysis` (HE) | Local inference via`transformers`        | —                                                      |
 
 ### 4.2 Caching and persistence
 
@@ -248,12 +251,12 @@ report_dir: "reports"
 
 Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-summarized.
 
-| Endpoint | Purpose |
-|---|---|
-| `POST /ohlc` | Cached daily/intraday OHLC for a symbol |
-| `POST /indicators` | RSI, MACD, Bollinger, ATR from cached OHLC |
-| `POST /sentiment` | FinBERT/HeBERT score for a batch of texts (auto-routes by detected language) |
-| `POST /report` | Render PDF from Risk Manager output + run id |
+| Endpoint             | Purpose                                                                      |
+| -------------------- | ---------------------------------------------------------------------------- |
+| `POST /ohlc`       | Cached daily/intraday OHLC for a symbol                                      |
+| `POST /indicators` | RSI, MACD, Bollinger, ATR from cached OHLC                                   |
+| `POST /sentiment`  | FinBERT/HeBERT score for a batch of texts (auto-routes by detected language) |
+| `POST /report`     | Render PDF from Risk Manager output + run id                                 |
 
 ```jsonc
 // POST /ohlc
@@ -295,6 +298,7 @@ PDF rendering uses **WeasyPrint** over a **Jinja2** template (`templates/report.
 - **Schedule Trigger** with `schedule_cron`; the workflow checks the current Asia/Jerusalem time against TASE hours and exits cleanly outside them.
 
 Top-level flow:
+
 1. Create a `run_id` and write a row into `runs`.
 2. For each ticker (n8n loop, concurrency 3): call the three analysis sub-workflows in parallel.
 3. Call the Risk Manager sub-workflow once per ticker; it runs the three-stage critique loop internally.
@@ -303,12 +307,12 @@ Top-level flow:
 
 ### 6.2 Sub-workflow input / output
 
-| Sub-workflow | Input | Calls | Output |
-|---|---|---|---|
-| Sentiment | `{ ticker, window_minutes, run_id }` | NewsAPI, RSS, `/sentiment` | §3.1 |
-| Earnings | `{ ticker, window_days, run_id }` | maya.tase.co.il (EN/HE) | §3.2 |
-| Technical | `{ ticker, lookback_days, run_id }` | `/ohlc`, `/indicators` | §3.3 |
-| Risk Manager | `{ ticker, sentiment, earnings, technical, run_id }` | (LLM only — three passes) | §6.3 |
+| Sub-workflow | Input                                                  | Calls                       | Output |
+| ------------ | ------------------------------------------------------ | --------------------------- | ------ |
+| Sentiment    | `{ ticker, window_minutes, run_id }`                 | NewsAPI, RSS,`/sentiment` | §3.1  |
+| Earnings     | `{ ticker, window_days, run_id }`                    | maya.tase.co.il (EN/HE)     | §3.2  |
+| Technical    | `{ ticker, lookback_days, run_id }`                  | `/ohlc`, `/indicators`  | §3.3  |
+| Risk Manager | `{ ticker, sentiment, earnings, technical, run_id }` | (LLM only — three passes)  | §6.3  |
 
 ### 6.3 Per-ticker Risk Manager output (consumed by `/report`)
 
@@ -342,21 +346,21 @@ Each sub-workflow holds its own OpenRouter Chat Model node, so model selection i
 
 The system intentionally combines four AI techniques beyond baseline LLM calls. Each is listed below with its location and what it contributes.
 
-| Technique | Where | What it adds |
-|---|---|---|
-| **Fine-tuned domain transformers** (FinBERT EN, HeBERT HE) | `/sentiment` endpoint, used by the Sentiment Agent (§3.1) | Independent sentiment signal alongside the LLM; disagreement becomes a first-class feature |
-| **Few-shot prompting from a labeled JSONL** | Sentiment + Earnings agents | Visible, version-controlled, evaluable prompt engineering |
-| **Self-consistency sampling** (n=3, temperature=0.3) | Earnings number extraction (§3.2) | Enforces "do not invent numbers" by construction, not by instruction |
-| **Multi-pass critique loop** (draft → devil's advocate → final) | Risk Manager (§3.4) | Visibly audits its own reasoning; reduces overconfident calls |
+| Technique                                                               | Where                                                        | What it adds                                                                               |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| **Fine-tuned domain transformers** (FinBERT EN, HeBERT HE)        | `/sentiment` endpoint, used by the Sentiment Agent (§3.1) | Independent sentiment signal alongside the LLM; disagreement becomes a first-class feature |
+| **Few-shot prompting from a labeled JSONL**                       | Sentiment + Earnings agents                                  | Visible, version-controlled, evaluable prompt engineering                                  |
+| **Self-consistency sampling** (n=3, temperature=0.3)              | Earnings number extraction (§3.2)                           | Enforces "do not invent numbers" by construction, not by instruction                       |
+| **Multi-pass critique loop** (draft → devil's advocate → final) | Risk Manager (§3.4)                                         | Visibly audits its own reasoning; reduces overconfident calls                              |
 
 **Model assignments and cost:**
 
-| Agent | OpenRouter model | Price (per 1M tokens) | Why |
-|---|---|---|---|
-| Sentiment | `anthropic/claude-haiku-4.5` | $1 in / $5 out | Multi-headline reading, translation, few-shot scoring |
-| Earnings | `anthropic/claude-haiku-4.5` | $1 in / $5 out | Translation, careful extraction with self-consistency |
-| Technical | `google/gemini-2.5-flash-lite` | $0.10 in / $0.40 out | Narrates a pre-computed JSON; no reasoning required |
-| Risk Manager (×3 passes) | `anthropic/claude-haiku-4.5` | $1 in / $5 out | Cross-agent synthesis, critique, and final justification |
+| Agent                     | OpenRouter model                 | Price (per 1M tokens) | Why                                                      |
+| ------------------------- | -------------------------------- | --------------------- | -------------------------------------------------------- |
+| Sentiment                 | `anthropic/claude-haiku-4.5`   | $1 in / $5 out        | Multi-headline reading, translation, few-shot scoring    |
+| Earnings                  | `anthropic/claude-haiku-4.5`   | $1 in / $5 out        | Translation, careful extraction with self-consistency    |
+| Technical                 | `google/gemini-2.5-flash-lite` | $0.10 in / $0.40 out  | Narrates a pre-computed JSON; no reasoning required      |
+| Risk Manager (×3 passes) | `anthropic/claude-haiku-4.5`   | $1 in / $5 out        | Cross-agent synthesis, critique, and final justification |
 
 Per-run cost for a five-ticker watchlist is roughly $0.04–$0.08 (the critique loop triples the Risk Manager's call count). All token usage is logged to `costs` per run/agent. Any agent's model is a one-field change to upgrade — Risk Manager promotion to `anthropic/claude-sonnet-4-6` is the natural fallback if rationale quality is insufficient.
 
@@ -399,13 +403,13 @@ A small evaluation harness ships with the system; results live in DuckDB (`evals
 
 ### 9.2 Metrics
 
-| Agent | Dataset | Metrics |
-|---|---|---|
-| Sentiment (LLM) | sentiment_labeled | Accuracy on label, MAE on numeric score |
-| Sentiment (FinBERT/HeBERT) | sentiment_labeled | Accuracy on label, MAE on numeric score |
-| Sentiment (agreement) | sentiment_labeled | Correlation between LLM and model scores |
-| Earnings (classifier) | earnings_labeled | F1 on `kind`, accuracy on `materiality` |
-| Earnings (extractor) | earnings_labeled | Field-level precision/recall (numbers correct when present, "ambiguous" when not) |
+| Agent                      | Dataset           | Metrics                                                                           |
+| -------------------------- | ----------------- | --------------------------------------------------------------------------------- |
+| Sentiment (LLM)            | sentiment_labeled | Accuracy on label, MAE on numeric score                                           |
+| Sentiment (FinBERT/HeBERT) | sentiment_labeled | Accuracy on label, MAE on numeric score                                           |
+| Sentiment (agreement)      | sentiment_labeled | Correlation between LLM and model scores                                          |
+| Earnings (classifier)      | earnings_labeled  | F1 on`kind`, accuracy on `materiality`                                        |
+| Earnings (extractor)       | earnings_labeled  | Field-level precision/recall (numbers correct when present, "ambiguous" when not) |
 
 ### 9.3 Harness
 
@@ -484,6 +488,7 @@ Only `.env.example` is committed. `reports/`, `store.duckdb`, and the HF cache a
 **Milestone A — Data and indicators.** Yahoo Finance ingestion into `prices`; `/ohlc` and `/indicators` working; cleaning per §4.3.
 
 **Milestone B — Three analysis agents.**
+
 - **B1 Technical Agent** (HTTP-only).
 - **B2 Sentiment Agent** with dual scoring (LLM + FinBERT/HeBERT), few-shot prompts, Pydantic validation.
 - **B3 Earnings Agent** with Maya EN/HE scraping, self-consistency sampling for numbers, Pydantic validation.
@@ -514,3 +519,4 @@ The grader's rubric explicitly rewards "understanding of solution limitations." 
 - **Maya scraping resilience** as above; if it becomes infeasible, the Earnings agent degrades to "no recent disclosure" rather than fabricating.
 - **NewsAPI coverage** as above.
 - **Schedule frequency.** Hourly during TASE hours is the default; a less-frequent schedule mostly saves NewsAPI quota without changing decisions given the two-hour news window.
+

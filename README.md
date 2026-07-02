@@ -108,10 +108,14 @@ below for which step owns what.
 
 ## Setup & quick start
 
-> Current state (through **Step 1**): the four endpoints still return **stub responses
-> matching the §5 contracts** (made real in Step 2), while **`ingest.py` already pulls and
-> cleans real TA-35 OHLC into DuckDB** (§4.1, §4.3). Both are verifiable without n8n or any
-> API keys.
+> Current state (through **Step 2**): **`/ohlc` and `/indicators` are real** — they serve
+> cached OHLC from DuckDB and compute RSI/MACD/Bollinger/ATR with `pandas-ta` (§5, §3.3),
+> **lazily (re-)ingesting** whenever the cache can't cover the requested `lookback_days` —
+> so a symbol you haven't pre-pulled is fetched on first request, and a later request for a
+> wider window transparently widens the cache (order-independent, since the Technical agent
+> picks its lookback per task). `/sentiment` and `/report` still return **stubs matching the §5
+> contracts** (made real in Steps 4 and 9). `ingest.py` remains the batch pre-warm path
+> (§4.1, §4.3). All of this is verifiable without n8n or any API keys.
 
 ### 1. Clone and create a virtualenv
 
@@ -137,6 +141,8 @@ pip install -r requirements.txt
 pip install fastapi "uvicorn[standard]" "pydantic>=2" duckdb pyyaml jinja2
 # Step 1 — real OHLC ingestion also needs:
 pip install yfinance certifi pandas numpy
+# Step 2 — real /ohlc + /indicators also needs:
+pip install pandas-ta
 ```
 
 ### 3. Configure environment
@@ -272,7 +278,7 @@ The system is built and reviewed **one step at a time** (full detail in `CLAUDE.
 |---|---|---|
 | 0 | Scaffold: repo layout, FastAPI stubs, DuckDB schema, config, template skeleton | ✅ done |
 | 1 | Data ingestion: Yahoo OHLC + cleaning → `prices` (`python ingest.py`) | ✅ done |
-| 2 | `/ohlc` + `/indicators` real (`pandas-ta`) | ⬜ |
+| 2 | `/ohlc` + `/indicators` real (`pandas-ta`) | ✅ done |
 | 3 | Technical Agent sub-workflow (n8n + Gemini Flash-Lite) | ⬜ |
 | 4 | `/sentiment` real (FinBERT + HeBERT) | ⬜ |
 | 5 | Sentiment Agent sub-workflow (dual scoring, few-shot, `news` table) | ⬜ |
@@ -313,6 +319,9 @@ The system is built and reviewed **one step at a time** (full detail in `CLAUDE.
   older CLI refuses with *"newer DuckDB"*).
 - **Single-writer DB:** close the DuckDB CLI / any open connection before running
   `ingest.py`, or you'll get *"file is being used by another process."*
-- **Python 3.13 on Windows:** `pandas-ta` (Step 2) and `WeasyPrint` (Step 9, needs the GTK
-  runtime) can need extra setup; we'll flag specifics when those steps land. Steps 0–1 are
-  unaffected.
+- **`pandas-ta` on numpy 2.x (Step 2):** older `pandas-ta` builds do `from numpy import NaN`,
+  an alias **removed in numpy 2.0**, so importing them crashes on the numpy 2.x this project
+  uses. `indicators_calc.py` restores the alias with a one-line, non-destructive shim
+  (`np.NaN = np.nan`) **before** importing `pandas_ta` — no numpy downgrade, no action needed.
+- **`WeasyPrint` on Windows (Step 9):** needs the GTK runtime; we'll flag specifics when that
+  step lands.
