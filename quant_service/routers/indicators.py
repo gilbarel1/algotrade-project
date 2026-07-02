@@ -2,7 +2,7 @@
 
 Reads the DuckDB `prices` cache (lazily ingesting on a miss via
 `cache.get_cached_ohlc`) and computes the requested indicators with `pandas-ta`
-(`indicators_calc`). Returns the §5 contract shape; an indicator without enough
+(`indicators.calc`). Returns the §5 contract shape; an indicator without enough
 history yields a `null` value rather than a crash.
 """
 
@@ -11,8 +11,8 @@ from typing import List
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-import indicators_calc
 from data import cache
+from indicators import calc
 
 router = APIRouter()
 
@@ -41,10 +41,10 @@ def indicators(req: IndicatorsRequest):
             "summary": f"degraded: {degrade_reason or 'no cached data'} — no indicators computed.",
         }
 
-    values = indicators_calc.compute_indicators(df, req.indicators)
+    values = calc.compute_indicators(df, req.indicators)
     as_of = df["ts"].iloc[-1].strftime("%Y-%m-%d")
 
-    short = indicators_calc.insufficient(len(df), req.indicators)
+    short = calc.insufficient(len(df), req.indicators)
     if short:
         summary = (
             f"{len(df)} bars; insufficient history for {', '.join(short)} "

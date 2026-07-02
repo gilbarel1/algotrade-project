@@ -434,7 +434,8 @@ n8n-investment-team/
 ├── quant_service/
 │   ├── app.py
 │   ├── routers/ {ohlc,indicators,sentiment,report}.py
-│   ├── data/ {yahoo.py, newsapi.py, maya.py, rss.py, cache.py}
+│   ├── data/ {yahoo.py, newsapi.py, maya.py, rss.py, cache.py, ingest.py}  # ingest = OHLC pull/clean CLI (python -m data.ingest)
+│   ├── indicators/ {calc.py}  # pandas-ta computation behind /indicators (§3.3, §5)
 │   ├── nlp/  {finbert.py, hebert.py, language_detect.py}
 │   ├── pdf/  {render.py, charts.py}
 │   ├── schemas/ {sentiment.py, earnings.py, technical.py, risk_manager.py}  # Pydantic

@@ -6,9 +6,9 @@ and writes the cleaned rows into the DuckDB `prices` cache (§4.2). Idempotent:
 re-running replaces rows by (symbol, ts).
 
 Usage (from quant_service/, with the venv active):
-    python ingest.py                      # full watchlist, lookback from config
-    python ingest.py --symbols TEVA.TA    # one or more explicit symbols
-    python ingest.py --lookback-days 90   # override the lookback
+    python -m data.ingest                      # full watchlist, lookback from config
+    python -m data.ingest --symbols TEVA.TA    # one or more explicit symbols
+    python -m data.ingest --lookback-days 90   # override the lookback
 """
 
 from __future__ import annotations
@@ -19,10 +19,13 @@ import time
 
 import yaml
 
-from data import cache, yahoo
+from . import cache, yahoo
 
+# data/ingest.py → up two levels (data/, quant_service/) reaches the repo root.
 CONFIG_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), "config", "universe.yaml"
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    "config",
+    "universe.yaml",
 )
 
 

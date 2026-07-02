@@ -70,14 +70,14 @@ algotrade-project/
 ├── quant_service/              # FastAPI service — all ML, indicators, PDF (§5)
 │   ├── app.py                  #   app entrypoint: uvicorn app:app --port 8000
 │   ├── routers/                #   one module per endpoint: ohlc, indicators, sentiment, report
-│   ├── data/                   #   yahoo, newsapi, maya, rss, cache  (data ingestion)
+│   ├── data/                   #   yahoo, newsapi, maya, rss, cache, ingest  (data ingestion)
+│   ├── indicators/             #   calc  (pandas-ta computation behind /indicators)
 │   ├── nlp/                    #   finbert, hebert, language_detect   (sentiment models)
 │   ├── pdf/                    #   render (WeasyPrint), charts (matplotlib)
 │   ├── schemas/                #   Pydantic models — validated at every LLM boundary
 │   ├── ops/                    #   cost_log, cost_report             (observability)
 │   ├── templates/              #   report.html.j2 + report.css        (Jinja2 → PDF)
 │   ├── store_init.py           #   create the DuckDB schema (run once)
-│   ├── ingest.py               #   pull + clean watchlist OHLC → prices cache (Step 1)
 │   ├── smoke_test.py           #   cross-platform endpoint check
 │   ├── store.duckdb            #   local cache/persistence (gitignored)
 │   └── requirements.txt
@@ -114,7 +114,7 @@ below for which step owns what.
 > so a symbol you haven't pre-pulled is fetched on first request, and a later request for a
 > wider window transparently widens the cache (order-independent, since the Technical agent
 > picks its lookback per task). `/sentiment` and `/report` still return **stubs matching the §5
-> contracts** (made real in Steps 4 and 9). `ingest.py` remains the batch pre-warm path
+> contracts** (made real in Steps 4 and 9). `python -m data.ingest` remains the batch pre-warm path
 > (§4.1, §4.3). All of this is verifiable without n8n or any API keys.
 
 ### 1. Clone and create a virtualenv
@@ -222,9 +222,9 @@ flagging) are applied automatically. **No API key needed** — Yahoo Finance is 
 
 ```bash
 cd quant_service
-python ingest.py                         # full watchlist: TEVA, NICE, LUMI, POLI, ESLT (.TA)
-#   python ingest.py --symbols TEVA.TA   # one or more explicit symbols
-#   python ingest.py --lookback-days 90  # override the 180-day default
+python -m data.ingest                        # full watchlist: TEVA, NICE, LUMI, POLI, ESLT (.TA)
+#   python -m data.ingest --symbols TEVA.TA  # one or more explicit symbols
+#   python -m data.ingest --lookback-days 90 # override the 180-day default
 ```
 
 Expect one row per symbol with `fetched / written / filled / dropped` counts and a date
@@ -277,7 +277,7 @@ The system is built and reviewed **one step at a time** (full detail in `CLAUDE.
 | Step | What | Status |
 |---|---|---|
 | 0 | Scaffold: repo layout, FastAPI stubs, DuckDB schema, config, template skeleton | ✅ done |
-| 1 | Data ingestion: Yahoo OHLC + cleaning → `prices` (`python ingest.py`) | ✅ done |
+| 1 | Data ingestion: Yahoo OHLC + cleaning → `prices` (`python -m data.ingest`) | ✅ done |
 | 2 | `/ohlc` + `/indicators` real (`pandas-ta`) | ✅ done |
 | 3 | Technical Agent sub-workflow (n8n + Gemini Flash-Lite) | ⬜ |
 | 4 | `/sentiment` real (FinBERT + HeBERT) | ⬜ |
@@ -312,16 +312,16 @@ The system is built and reviewed **one step at a time** (full detail in `CLAUDE.
   ingester auto-fixes this on Windows by trusting the OS certificate store
   (`data/yahoo.py: configure_tls()` builds a `certifi` + Windows-root CA bundle) — **no action
   needed**. On other OSes behind such a proxy, point `CURL_CA_BUNDLE` at your corporate CA
-  bundle before running `python ingest.py`.
+  bundle before running `python -m data.ingest`.
 - **DuckDB CLI version:** the CLI can only open `store.duckdb` if its version matches the
   Python `duckdb` library that wrote it. Check
   `python -c "import duckdb; print(duckdb.__version__)"` and install the same CLI version (an
   older CLI refuses with *"newer DuckDB"*).
 - **Single-writer DB:** close the DuckDB CLI / any open connection before running
-  `ingest.py`, or you'll get *"file is being used by another process."*
+  `python -m data.ingest`, or you'll get *"file is being used by another process."*
 - **`pandas-ta` on numpy 2.x (Step 2):** older `pandas-ta` builds do `from numpy import NaN`,
   an alias **removed in numpy 2.0**, so importing them crashes on the numpy 2.x this project
-  uses. `indicators_calc.py` restores the alias with a one-line, non-destructive shim
+  uses. `indicators/calc.py` restores the alias with a one-line, non-destructive shim
   (`np.NaN = np.nan`) **before** importing `pandas_ta` — no numpy downgrade, no action needed.
 - **`WeasyPrint` on Windows (Step 9):** needs the GTK runtime; we'll flag specifics when that
   step lands.
