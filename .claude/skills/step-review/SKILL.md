@@ -102,6 +102,12 @@ record what was exercised in the step report.
 - No secrets, `.env`, `*.duckdb`, `reports/`, or cache files staged.
 - New files live where the placement taxonomy in the `repo-structure` skill puts
   them; if files were added, consider running that skill too.
+- **`README.md` reflects this step.** Update the build-roadmap table (flip this
+  step's status to ✅ done), the "Current state" banner, and any endpoint /
+  routers / repo-structure listing the step changed. If the step added a
+  step-specific quirk a follow-up reader would trip on, add a "Known gotchas"
+  bullet. The README is a living status doc — a step whose README still shows it
+  as ⬜ or describes stale state is not done.
 - Every "How to verify" command in the upcoming step report was actually executed
   and produced the claimed result.
 
