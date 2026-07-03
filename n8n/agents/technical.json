@@ -1,1 +1,340 @@
-{}
+{
+  "name": "Technical Agent (§3.3)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "ticker", "type": "string" },
+            { "name": "lookback_days", "type": "number" },
+            { "name": "run_id", "type": "string" }
+          ]
+        }
+      },
+      "id": "trigger-technical",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-1200, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/ohlc",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ symbol: $json.ticker, lookback_days: $json.lookback_days || 180, interval: '1d' }) }}",
+        "options": {}
+      },
+      "id": "http-ohlc",
+      "name": "Fetch OHLC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-980, 0],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/indicators",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ symbol: $('When Executed by Another Workflow').first().json.ticker, lookback_days: $('When Executed by Another Workflow').first().json.lookback_days || 120, indicators: ['rsi', 'macd', 'bbands', 'atr'] }) }}",
+        "options": {}
+      },
+      "id": "http-indicators",
+      "name": "Fetch Indicators",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-760, 0],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Assemble the Flash-Lite narration prompt (§3.3).\n// Guardrail (§2): OHLC candle arrays never traverse the LLM — the prompt\n// carries only the computed indicator values and the short service summaries.\nconst trigger = $('When Executed by Another Workflow').first().json;\nconst ind = $('Fetch Indicators').first().json;\nconst ohlc = $('Fetch OHLC').first().json;\n\nconst inputsOk = Boolean(ind.as_of) && !!ind.indicators && Object.keys(ind.indicators).length > 0;\nconst degradeReason = inputsOk\n  ? null\n  : `quant service returned no indicators (${ind.summary || (ind.error && ind.error.message) || ohlc.summary || 'no data'})`;\n\nconst prompt = [\n  `You are the Technical Agent for TA-35 ticker ${ind.symbol}.`,\n  `As of ${ind.as_of}, computed indicators (RSI 14, MACD 12/26/9, Bollinger 20/2, ATR 14):`,\n  JSON.stringify(ind.indicators),\n  `Quant service note: ${ind.summary}`,\n  '',\n  'Write a plain-English reading of these indicators and classify the technical signal.',\n  'Respond with ONLY a JSON object, no markdown fences, exactly this shape:',\n  '{\"signal\": \"<one of: bullish_momentum, bearish_momentum, overbought, oversold, neutral>\", \"summary\": \"<at most 2 sentences, under 500 characters>\"}',\n  'Base the reading strictly on the numbers provided. Treat null values as unavailable — do not guess them.',\n].join('\\n');\n\nreturn [{\n  json: {\n    ticker: trigger.ticker,\n    run_id: trigger.run_id,\n    as_of: ind.as_of,\n    indicators: ind.indicators,\n    inputs_ok: inputsOk,\n    degrade_reason: degradeReason,\n    prompt,\n  },\n}];"
+      },
+      "id": "code-build-prompt",
+      "name": "Build Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-540, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "inputs-ok",
+              "leftValue": "={{ $json.inputs_ok }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-inputs-ok",
+      "name": "Inputs OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-320, 0]
+    },
+    {
+      "parameters": {
+        "model": "google/gemini-2.5-flash-lite",
+        "options": { "temperature": 0 }
+      },
+      "id": "lm-openrouter-flashlite",
+      "name": "OpenRouter Flash-Lite",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [-100, 320],
+      "credentials": {
+        "openRouterApi": {
+          "id": "REPLACE_AFTER_IMPORT",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}"
+      },
+      "id": "chain-narrate",
+      "name": "Narrate",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [-100, -100],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the raw LLM text into a candidate payload for POST /validate.\n// A parse failure is NOT swallowed — it becomes an invalid payload so the\n// validate → retry → degraded path handles it (§9.4).\nconst raw = ($json.text ?? '').toString().trim()\n  .replace(/^```(?:json)?\\s*/i, '')\n  .replace(/```\\s*$/, '');\nlet payload;\ntry {\n  payload = JSON.parse(raw);\n} catch (e) {\n  payload = { _parse_error: String(e) };\n}\nif (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {\n  payload = { _not_an_object: true };\n}\nreturn [{ json: { agent: 'technical', payload, raw } }];"
+      },
+      "id": "code-parse-narration",
+      "name": "Parse Narration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [120, -100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/validate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ agent: 'technical', payload: $json.payload }) }}",
+        "options": {}
+      },
+      "id": "http-validate",
+      "name": "Validate Narration",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [340, -100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "narration-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [560, -100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// §3.3 output + §3.4 canonical status. Indicator numbers come from the\n// quant service context, never from the LLM.\nconst ctx = $('Build Prompt').first().json;\nconst narration = $('Parse Narration').first().json.payload;\nreturn [{\n  json: {\n    ticker: ctx.ticker,\n    as_of: ctx.as_of,\n    indicators: ctx.indicators,\n    signal: narration.signal,\n    summary: narration.summary,\n    status: 'ok',\n  },\n}];"
+      },
+      "id": "code-assemble-ok",
+      "name": "Assemble Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [780, -220]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One automatic retry with a stricter instruction (§9.4). The validation\n// errors from POST /validate are quoted back to the model.\nconst ctx = $('Build Prompt').first().json;\nconst errors = $json.errors || [];\nconst prompt = ctx.prompt\n  + '\\n\\nYour previous response was rejected by schema validation: '\n  + JSON.stringify(errors)\n  + '\\nRespond again with ONLY the JSON object described above — no prose, no markdown fences, no extra keys. '\n  + '\"signal\" MUST be exactly one of: bullish_momentum, bearish_momentum, overbought, oversold, neutral.';\nreturn [{ json: { prompt } }];"
+      },
+      "id": "code-stricter-prompt",
+      "name": "Build Stricter Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [780, 20]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}"
+      },
+      "id": "chain-narrate-retry",
+      "name": "Narrate (Retry)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [1000, 20],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = ($json.text ?? '').toString().trim()\n  .replace(/^```(?:json)?\\s*/i, '')\n  .replace(/```\\s*$/, '');\nlet payload;\ntry {\n  payload = JSON.parse(raw);\n} catch (e) {\n  payload = { _parse_error: String(e) };\n}\nif (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {\n  payload = { _not_an_object: true };\n}\nreturn [{ json: { agent: 'technical', payload, raw } }];"
+      },
+      "id": "code-parse-retry",
+      "name": "Parse Retry Narration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1220, 20]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/validate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ agent: 'technical', payload: $json.payload }) }}",
+        "options": {}
+      },
+      "id": "http-validate-retry",
+      "name": "Validate Retry",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 20]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "retry-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid-retry",
+      "name": "Valid (Retry)?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1660, 20]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Build Prompt').first().json;\nconst narration = $('Parse Retry Narration').first().json.payload;\nreturn [{\n  json: {\n    ticker: ctx.ticker,\n    as_of: ctx.as_of,\n    indicators: ctx.indicators,\n    signal: narration.signal,\n    summary: narration.summary,\n    status: 'ok',\n  },\n}];"
+      },
+      "id": "code-assemble-retry",
+      "name": "Assemble Output (Retry)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1880, -100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Degraded result (§9.4): no fabrication, explicit reason, neutral signal.\n// Reached either when the quant service had no data (Inputs OK? = false)\n// or when the narration failed validation twice.\nconst ctx = $('Build Prompt').first().json;\nlet reason;\nif (ctx.inputs_ok === false) {\n  reason = ctx.degrade_reason || 'no indicator data from quant service';\n} else {\n  let errors = [];\n  try { errors = $('Validate Retry').first().json.errors || []; } catch (e) { /* retry branch never ran */ }\n  reason = 'LLM narration failed schema validation after one stricter retry'\n    + (errors.length ? ` (${errors.join('; ')})` : '');\n}\nreturn [{\n  json: {\n    ticker: ctx.ticker,\n    as_of: ctx.as_of || null,\n    indicators: ctx.indicators || {},\n    signal: 'neutral',\n    summary: `degraded: ${reason}`,\n    status: 'degraded',\n  },\n}];"
+      },
+      "id": "code-degraded",
+      "name": "Degraded Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1880, 240]
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [[{ "node": "Fetch OHLC", "type": "main", "index": 0 }]]
+    },
+    "Fetch OHLC": {
+      "main": [[{ "node": "Fetch Indicators", "type": "main", "index": 0 }]]
+    },
+    "Fetch Indicators": {
+      "main": [[{ "node": "Build Prompt", "type": "main", "index": 0 }]]
+    },
+    "Build Prompt": {
+      "main": [[{ "node": "Inputs OK?", "type": "main", "index": 0 }]]
+    },
+    "Inputs OK?": {
+      "main": [
+        [{ "node": "Narrate", "type": "main", "index": 0 }],
+        [{ "node": "Degraded Output", "type": "main", "index": 0 }]
+      ]
+    },
+    "OpenRouter Flash-Lite": {
+      "ai_languageModel": [
+        [
+          { "node": "Narrate", "type": "ai_languageModel", "index": 0 },
+          { "node": "Narrate (Retry)", "type": "ai_languageModel", "index": 0 }
+        ]
+      ]
+    },
+    "Narrate": {
+      "main": [[{ "node": "Parse Narration", "type": "main", "index": 0 }]]
+    },
+    "Parse Narration": {
+      "main": [[{ "node": "Validate Narration", "type": "main", "index": 0 }]]
+    },
+    "Validate Narration": {
+      "main": [[{ "node": "Valid?", "type": "main", "index": 0 }]]
+    },
+    "Valid?": {
+      "main": [
+        [{ "node": "Assemble Output", "type": "main", "index": 0 }],
+        [{ "node": "Build Stricter Prompt", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Stricter Prompt": {
+      "main": [[{ "node": "Narrate (Retry)", "type": "main", "index": 0 }]]
+    },
+    "Narrate (Retry)": {
+      "main": [[{ "node": "Parse Retry Narration", "type": "main", "index": 0 }]]
+    },
+    "Parse Retry Narration": {
+      "main": [[{ "node": "Validate Retry", "type": "main", "index": 0 }]]
+    },
+    "Validate Retry": {
+      "main": [[{ "node": "Valid (Retry)?", "type": "main", "index": 0 }]]
+    },
+    "Valid (Retry)?": {
+      "main": [
+        [{ "node": "Assemble Output (Retry)", "type": "main", "index": 0 }],
+        [{ "node": "Degraded Output", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

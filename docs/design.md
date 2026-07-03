@@ -257,6 +257,7 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
 | `POST /indicators` | RSI, MACD, Bollinger, ATR from cached OHLC                                   |
 | `POST /sentiment`  | FinBERT/HeBERT score for a batch of texts (auto-routes by detected language) |
 | `POST /report`     | Render PDF from Risk Manager output + run id                                 |
+| `POST /validate`   | Validate an agent's raw LLM JSON against its Pydantic schema in `schemas/` (the §9.4 LLM-boundary guardrail; n8n's embedded Python cannot import the repo's schemas, so validation is served over HTTP) |
 
 ```jsonc
 // POST /ohlc
@@ -284,6 +285,11 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
 { "run_id":"r_2026-06-22T13:00", "recommendations":[ /* per-ticker, see §6.3 */ ],
   "summary":"3 long, 1 hold, 1 avoid." }
 { "run_id":"r_2026-06-22T13:00", "pdf_path":"reports/2026-06-22/1300/report.pdf" }
+
+// POST /validate
+{ "agent":"technical", "payload":{"signal":"bullish_momentum","summary":"Momentum building."} }
+{ "agent":"technical", "valid":true, "errors":[] }
+// invalid example: {"valid":false, "errors":["signal: Input should be 'bullish_momentum', … or 'neutral'"]}
 ```
 
 PDF rendering uses **WeasyPrint** over a **Jinja2** template (`templates/report.html.j2`).
