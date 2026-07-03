@@ -32,7 +32,7 @@ Two layers joined by one HTTP boundary (§2 of the design):
                                   ▼
                   ┌─────────────────────────────────────────────┐
                   │  quant_service  (Python + FastAPI)           │
-                  │  /ohlc  /indicators  /sentiment  /report     │
+                  │  /ohlc /indicators /sentiment /report /validate │
                   │  pandas-ta · FinBERT/HeBERT · WeasyPrint     │
                   └───────────────┬─────────────────────────────┘
                                   ▼
@@ -69,7 +69,7 @@ keys**.
 algotrade-project/
 ├── quant_service/              # FastAPI service — all ML, indicators, PDF (§5)
 │   ├── app.py                  #   app entrypoint: uvicorn app:app --port 8000
-│   ├── routers/                #   one module per endpoint: ohlc, indicators, sentiment, report
+│   ├── routers/                #   one module per endpoint: ohlc, indicators, sentiment, report, validate
 │   ├── data/                   #   yahoo, newsapi, maya, rss, cache, ingest  (data ingestion)
 │   ├── indicators/             #   calc  (pandas-ta computation behind /indicators)
 │   ├── nlp/                    #   finbert, hebert, language_detect   (sentiment models)
@@ -108,14 +108,19 @@ below for which step owns what.
 
 ## Setup & quick start
 
-> Current state (through **Step 2**): **`/ohlc` and `/indicators` are real** — they serve
+> Current state (through **Step 3**): **`/ohlc` and `/indicators` are real** — they serve
 > cached OHLC from DuckDB and compute RSI/MACD/Bollinger/ATR with `pandas-ta` (§5, §3.3),
 > **lazily (re-)ingesting** whenever the cache can't cover the requested `lookback_days` —
 > so a symbol you haven't pre-pulled is fetched on first request, and a later request for a
 > wider window transparently widens the cache (order-independent, since the Technical agent
-> picks its lookback per task). `/sentiment` and `/report` still return **stubs matching the §5
-> contracts** (made real in Steps 4 and 9). `python -m data.ingest` remains the batch pre-warm path
-> (§4.1, §4.3). All of this is verifiable without n8n or any API keys.
+> picks its lookback per task). The **Technical Agent n8n sub-workflow** (`n8n/agents/technical.json`)
+> is live: it calls `/ohlc` + `/indicators`, narrates with Gemini Flash-Lite, and validates the
+> LLM output via the new **`POST /validate`** endpoint (Pydantic schema in `schemas/technical.py`),
+> with a stricter-retry-then-`degraded` path (§3.3, §9.4). `/sentiment` and `/report` still return
+> **stubs matching the §5 contracts** (made real in Steps 4 and 9). `python -m data.ingest` remains
+> the batch pre-warm path (§4.1, §4.3). The quant-service endpoints (including `/validate`) are
+> verifiable without n8n or any API keys via `python smoke_test.py`; running the n8n sub-workflow
+> end-to-end needs n8n + an OpenRouter key (see `n8n/README_credentials.md`).
 
 ### 1. Clone and create a virtualenv
 
@@ -279,7 +284,7 @@ The system is built and reviewed **one step at a time** (full detail in `CLAUDE.
 | 0 | Scaffold: repo layout, FastAPI stubs, DuckDB schema, config, template skeleton | ✅ done |
 | 1 | Data ingestion: Yahoo OHLC + cleaning → `prices` (`python -m data.ingest`) | ✅ done |
 | 2 | `/ohlc` + `/indicators` real (`pandas-ta`) | ✅ done |
-| 3 | Technical Agent sub-workflow (n8n + Gemini Flash-Lite) | ⬜ |
+| 3 | Technical Agent sub-workflow (n8n + Gemini Flash-Lite) + `/validate` endpoint | ✅ done |
 | 4 | `/sentiment` real (FinBERT + HeBERT) | ⬜ |
 | 5 | Sentiment Agent sub-workflow (dual scoring, few-shot, `news` table) | ⬜ |
 | 6 | Earnings Agent (Maya scraping + self-consistency number extraction) | ⬜ |
@@ -323,5 +328,14 @@ The system is built and reviewed **one step at a time** (full detail in `CLAUDE.
   an alias **removed in numpy 2.0**, so importing them crashes on the numpy 2.x this project
   uses. `indicators/calc.py` restores the alias with a one-line, non-destructive shim
   (`np.NaN = np.nan`) **before** importing `pandas_ta` — no numpy downgrade, no action needed.
+- **Running an n8n sub-workflow locally (Step 3+):** three Windows quirks worth knowing.
+  (a) n8n HTTP nodes reach the quant service at **`http://127.0.0.1:8000`**, not `localhost` —
+  Node resolves `localhost` to IPv6 (`::1`) first and uvicorn binds IPv4, giving
+  `ECONNREFUSED ::1:8000`. (b) `{{ $env.VAR }}` expressions can be blocked in this n8n version
+  (`access to env vars denied`); for a quick local run, temporarily switch the node's URL field
+  from *Expression* to *Fixed* and type the literal URL (the committed workflow keeps the
+  `$env` form). (c) To test a sub-workflow standalone, **pin mock output on its Execute-Workflow
+  trigger** (e.g. `[{ "ticker":"TEVA.TA","lookback_days":180,"run_id":"r_test" }]`) — otherwise
+  `$json.ticker` is null and `/ohlc` returns 422. See `n8n/README_credentials.md`.
 - **`WeasyPrint` on Windows (Step 9):** needs the GTK runtime; we'll flag specifics when that
   step lands.
