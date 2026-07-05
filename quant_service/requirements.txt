@@ -21,6 +21,7 @@ torch
 httpx
 beautifulsoup4
 feedparser
+truststore        # OS-native TLS trust for httpx (corporate-proxy CAs); verify stays on
 
 # PDF + charts (Step 9)
 weasyprint

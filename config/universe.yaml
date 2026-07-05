@@ -2,6 +2,37 @@ watchlist: ["TEVA.TA","NICE.TA","LUMI.TA","POLI.TA","ESLT.TA"]
 news_window_minutes: 120
 earnings_window_days: 5
 ohlc_lookback_days: 180
+
+# Ticker -> query terms used to fetch news (§3.1). Runs are unattended (schedule
+# trigger over the fixed watchlist), so there is no user query: the ticker IS the
+# query. But *.TA symbols are not searchable on NewsAPI/RSS ("TEVA.TA" matches no
+# article text), so each ticker maps to the company's common name(s), incl. the
+# Hebrew name for the HE feeds. NewsAPI is searched by these terms; RSS feeds are
+# pulled whole and filtered locally to items whose headline/summary contains a
+# term (§4.3: not just tag metadata). Zero matches is a valid "no coverage"
+# result (§13), distinct from a fetch failure.
+search_terms:
+  # "Teva" alone collides with the Teva footwear brand (sandals/deals) in EN and
+  # means "nature" in HE (also inside "מטבע"/currency), so distinctive company
+  # names are used: "Teva Pharmaceutical" (EN) and "טבע תעשיות" (Teva Industries, HE).
+  TEVA.TA: ["Teva Pharmaceutical", "טבע תעשיות"]
+  NICE.TA: ["NICE Ltd", "NICE Systems"]
+  LUMI.TA: ["Bank Leumi", "Leumi", "לאומי"]
+  POLI.TA: ["Bank Hapoalim", "Hapoalim", "הפועלים"]
+  ESLT.TA: ["Elbit Systems", "Elbit", "אלביט"]
+
+# RSS feeds fetched server-side by /news/fetch. EN feeds are primary; HE feeds
+# are the §3.1 fallback (LLM translates inline). NewsAPI covers EN separately.
+# URLs verified live 2026-07-05 (the previously-listed Calcalist feeds 404/403).
+rss_feeds:
+  en:
+    # Globes English — general news feed (feed language: en).
+    - "https://www.globes.co.il/webservice/rss/rssfeeder.asmx/FeederNode?iID=1725"
+  he:
+    # Ynet — כלכלה (economy).
+    - "https://www.ynet.co.il/Integration/StoryRss6.xml"
+    # Globes — שוק ההון והשקעות (capital markets & investments).
+    - "https://www.globes.co.il/webservice/rss/rssfeeder.asmx/FeederNode?iID=585"
 # Cron is evaluated in n8n's TZ setting; set TZ=Asia/Jerusalem (§11.1) so this reads as local.
 # Sun–Thu, hourly from 10:00 to 17:00 local time (covers TASE continuous trading ~09:30–17:25 IDT/IST).
 # Day-of-week: 0=Sunday in n8n cron. DST is handled by the TZ setting, not the cron expression.

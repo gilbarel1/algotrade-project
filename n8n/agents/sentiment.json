@@ -1,1 +1,775 @@
-{}
+{
+  "name": "Sentiment Agent (§3.1)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "ticker",
+              "type": "string"
+            },
+            {
+              "name": "window_minutes",
+              "type": "number"
+            },
+            {
+              "name": "run_id",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "trigger-sentiment",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1360,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/news/fetch",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ticker: $json.ticker, window_minutes: $json.window_minutes }) }}",
+        "options": {}
+      },
+      "id": "http-fetch",
+      "name": "Fetch News",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1140,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize the /news/fetch result and decide the branch (§3.1, §9.4).\n// httpRequest onError:continueRegularOutput leaves an `error` object on failure;\n// a partial-source failure returns items with a summary prefixed \"degraded:\".\nconst fetch = $json;\nconst trigger = $('When Executed by Another Workflow').first().json;\nconst httpError = fetch.error !== undefined || fetch.items === undefined;\nconst items = Array.isArray(fetch.items) ? fetch.items : [];\nconst summary = (fetch.summary || '').toString();\nconst degradedFetch = httpError || summary.startsWith('degraded:');\nconst windowMinutes = Number(trigger.window_minutes) || 120;\nreturn [{ json: {\n  ticker: trigger.ticker,\n  run_id: trigger.run_id,\n  window_minutes: windowMinutes,\n  items,\n  few_shot: Array.isArray(fetch.few_shot) ? fetch.few_shot : [],\n  fetch_summary: summary || (httpError ? 'news fetch failed' : ''),\n  has_items: items.length > 0,\n  degraded_fetch: degradedFetch,\n} }];\n"
+      },
+      "id": "code-prep",
+      "name": "Prep Fetch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -920,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if-has-items-c",
+              "leftValue": "={{ $json.has_items }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-items",
+      "name": "Has Items?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -700,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if-degraded-fetch-c",
+              "leftValue": "={{ $json.degraded_fetch }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-degraded-fetch",
+      "name": "Degraded Fetch?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -480,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fetch itself failed/degraded and produced no items (§9.4): no fabrication,\n// explicit reason, null aggregates. Risk Manager downgrades conviction.\nconst c = $('Prep Fetch').first().json;\nreturn [{ json: {\n  ticker: c.ticker,\n  window: (c.window_minutes / 60) + 'h',\n  llm_sentiment: null,\n  model_sentiment: null,\n  disagreement: null,\n  n_articles: 0,\n  top_items: [],\n  summary: `degraded: ${c.fetch_summary || 'news fetch failed'}`,\n  status: 'degraded',\n} }];\n"
+      },
+      "id": "code-degraded",
+      "name": "Degraded Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Healthy fetch, zero matching articles: a valid \"no coverage\" result (§13).\n// Never padded — neutral scores and an explicit zero article count.\nconst c = $('Prep Fetch').first().json;\nreturn [{ json: {\n  ticker: c.ticker,\n  window: (c.window_minutes / 60) + 'h',\n  llm_sentiment: 0.0,\n  model_sentiment: 0.0,\n  disagreement: 0.0,\n  n_articles: 0,\n  top_items: [],\n  summary: `No recent coverage in the last ${c.window_minutes}m.`,\n  status: 'ok',\n} }];\n"
+      },
+      "id": "code-no-coverage",
+      "name": "No-Coverage Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/sentiment",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ items: $('Prep Fetch').first().json.items.map(a => ({ id: a.id, text: a.headline + (a.summary ? '. ' + a.summary : ''), language: a.language })) }) }}",
+        "options": {}
+      },
+      "id": "http-sentiment",
+      "name": "Call /sentiment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -480,
+        -140
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize the /sentiment (FinBERT/HeBERT) response. onError leaves `error`;\n// the endpoint prefixes its summary with \"degraded:\" when a model was unavailable.\nconst resp = $json;\nconst scores = Array.isArray(resp.scores) ? resp.scores : [];\nconst summary = (resp.summary || '').toString();\nconst degraded = resp.error !== undefined || resp.scores === undefined || summary.startsWith('degraded:');\nreturn [{ json: { model_scores: scores, model_summary: summary, model_degraded: degraded } }];\n"
+      },
+      "id": "code-model-scores",
+      "name": "Model Scores",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the few-shot LLM scoring prompt (§3.1). Only short text (headline +\n// summary) and ids traverse the LLM — never article bodies (§2 guardrail).\n// Few-shot examples come from /news/fetch (loaded from prompts/sentiment_examples.jsonl).\nconst c = $('Prep Fetch').first().json;\nconst items = c.items;\nconst fewShot = c.few_shot || [];\nconst shotLines = fewShot\n  .map(e => `- (${e.language}) \"${e.text}\" => score ${e.score} — ${e.reasoning}`)\n  .join('\\n');\nconst articleLines = items\n  .map(a => `- id=${a.id} (${a.language}) ${a.headline}${a.summary ? ' — ' + a.summary : ''}`)\n  .join('\\n');\nconst prompt = [\n  `You are the Sentiment Agent for TA-35 ticker ${c.ticker}.`,\n  'Score each news item\\'s sentiment toward the company on a -1..+1 scale',\n  '(-1 very negative, 0 neutral, +1 very positive). Translate Hebrew inline as needed.',\n  '',\n  'Labeled examples:',\n  shotLines || '(none)',\n  '',\n  'News items to score:',\n  articleLines,\n  '',\n  'Respond with ONLY a JSON object, no markdown fences, exactly this shape:',\n  '{\"items\":[{\"id\":\"<id>\",\"score\":<number -1..1>,\"reasoning\":\"<short, under 300 chars>\"}],\"summary\":\"<overall tone, under 500 chars>\"}',\n  'Include exactly one entry per news id listed above. Base scores only on the text provided.',\n].join('\\n');\nreturn [{ json: { ticker: c.ticker, run_id: c.run_id, prompt } }];\n"
+      },
+      "id": "code-build-prompt",
+      "name": "Build LLM Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "model": "anthropic/claude-haiku-4.5",
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "lm-openrouter-haiku",
+      "name": "OpenRouter Haiku",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        180,
+        200
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "id": "REPLACE_AFTER_IMPORT",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}"
+      },
+      "id": "chain-score",
+      "name": "Score",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        180,
+        -140
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the raw LLM text into a candidate payload for POST /validate.\n// A parse failure is NOT swallowed — it becomes an invalid payload so the\n// validate -> retry -> degraded path handles it (§9.4).\nconst raw = ($json.text ?? '').toString().trim()\n  .replace(/^```(?:json)?\\s*/i, '')\n  .replace(/```\\s*$/, '');\nlet payload;\ntry {\n  payload = JSON.parse(raw);\n} catch (e) {\n  payload = { _parse_error: String(e) };\n}\nif (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {\n  payload = { _not_an_object: true };\n}\nreturn [{ json: { agent: 'sentiment', payload, raw } }];\n"
+      },
+      "id": "code-parse",
+      "name": "Parse Scores",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/validate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ agent: 'sentiment', payload: $json.payload }) }}",
+        "options": {}
+      },
+      "id": "http-validate",
+      "name": "Validate Scores",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        620,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if-valid-c",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Scores Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        840,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// LLM scores passed schema validation — carry the per-article scores forward.\nconst payload = $('Parse Scores').first().json.payload;\nreturn [{ json: {\n  llm_items: payload.items,\n  llm_summary: payload.summary || '',\n  llm_degraded: false,\n  llm_reason: null,\n} }];\n"
+      },
+      "id": "code-llm-ok",
+      "name": "LLM Scores OK",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1060,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One automatic retry with a stricter instruction (§9.4); the /validate errors\n// are quoted back to the model.\nconst base = $('Build LLM Prompt').first().json;\nconst errors = $json.errors || [];\nconst prompt = base.prompt\n  + '\\n\\nYour previous response was rejected by schema validation: '\n  + JSON.stringify(errors)\n  + '\\nRespond again with ONLY the JSON object described above — no prose, no markdown '\n  + 'fences, no extra keys. Each item score MUST be a number between -1 and 1, with '\n  + 'exactly one entry per news id.';\nreturn [{ json: { prompt } }];\n"
+      },
+      "id": "code-stricter",
+      "name": "Build Stricter Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1060,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}"
+      },
+      "id": "chain-score-retry",
+      "name": "Score (Retry)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        1280,
+        -20
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the raw LLM text into a candidate payload for POST /validate.\n// A parse failure is NOT swallowed — it becomes an invalid payload so the\n// validate -> retry -> degraded path handles it (§9.4).\nconst raw = ($json.text ?? '').toString().trim()\n  .replace(/^```(?:json)?\\s*/i, '')\n  .replace(/```\\s*$/, '');\nlet payload;\ntry {\n  payload = JSON.parse(raw);\n} catch (e) {\n  payload = { _parse_error: String(e) };\n}\nif (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {\n  payload = { _not_an_object: true };\n}\nreturn [{ json: { agent: 'sentiment', payload, raw } }];\n"
+      },
+      "id": "code-parse-retry",
+      "name": "Parse Retry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/validate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ agent: 'sentiment', payload: $json.payload }) }}",
+        "options": {}
+      },
+      "id": "http-validate-retry",
+      "name": "Validate Retry",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1720,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if-valid-retry-c",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid-retry",
+      "name": "Retry Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1940,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $('Parse Retry').first().json.payload;\nreturn [{ json: {\n  llm_items: payload.items,\n  llm_summary: payload.summary || '',\n  llm_degraded: false,\n  llm_reason: null,\n} }];\n"
+      },
+      "id": "code-llm-ok-retry",
+      "name": "LLM Scores OK (Retry)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        -140
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// LLM scoring failed validation twice — degrade the LLM side only. The model\n// (FinBERT/HeBERT) side still contributes; no fabrication (§9.4).\nlet errors = [];\ntry { errors = $('Validate Retry').first().json.errors || []; } catch (e) { /* retry never ran */ }\nreturn [{ json: {\n  llm_items: null,\n  llm_summary: '',\n  llm_degraded: true,\n  llm_reason: 'LLM scoring failed schema validation after one stricter retry'\n    + (errors.length ? ` (${errors.join('; ')})` : ''),\n} }];\n"
+      },
+      "id": "code-llm-degraded",
+      "name": "LLM Degraded",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combine the two independent scorers into the §3.1 output and compute the\n// disagreement metric. The fired LLM terminal is on $json; the model scores and\n// fetch context are pulled by node name so this works regardless of which LLM\n// terminal (ok / retry-ok / degraded) executed.\nconst c = $('Prep Fetch').first().json;\nconst model = $('Model Scores').first().json;\nconst llm = $json;\nconst items = c.items;\n\nconst llmMap = {};\nif (Array.isArray(llm.llm_items)) for (const it of llm.llm_items) llmMap[it.id] = Number(it.score);\nconst modelMap = {};\nif (Array.isArray(model.model_scores)) for (const s of model.model_scores) modelMap[s.id] = Number(s.score);\n\nconst perItem = items.map(a => {\n  const ls = (a.id in llmMap) ? llmMap[a.id] : null;\n  const ms = (a.id in modelMap) ? modelMap[a.id] : null;\n  const disagree = (ls !== null && ms !== null) ? Math.abs(ls - ms) : null;\n  return { item: a, llm_score: ls, model_score: ms, disagreement: disagree };\n});\n\nconst mean = (arr) => {\n  const v = arr.filter(x => x !== null && !Number.isNaN(x));\n  return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;\n};\nconst round = (x) => (x === null ? null : Math.round(x * 10000) / 10000);\n\nconst llmAgg = round(mean(perItem.map(p => p.llm_score)));\nconst modelAgg = round(mean(perItem.map(p => p.model_score)));\nconst disagreeAgg = round(mean(perItem.map(p => p.disagreement)));\n\nconst mag = (p) => Math.abs(p.llm_score !== null ? p.llm_score : (p.model_score !== null ? p.model_score : 0));\nconst top = [...perItem].sort((a, b) => mag(b) - mag(a)).slice(0, 5).map(p => ({\n  headline: p.item.headline,\n  source: p.item.source,\n  url: p.item.url,\n  language: p.item.language,\n  llm_score: p.llm_score,\n  model_score: p.model_score,\n}));\n\nconst degraded = Boolean(llm.llm_degraded || model.model_degraded || c.degraded_fetch);\nconst parts = [];\nif (c.degraded_fetch) parts.push(c.fetch_summary || 'news fetch degraded');\nif (llm.llm_degraded) parts.push(llm.llm_reason || 'LLM scoring degraded');\nif (model.model_degraded) parts.push('model scoring degraded');\nlet summary = llm.llm_summary || `Scored ${items.length} item(s).`;\nif (parts.length) summary = 'degraded: ' + parts.join('; ') + (llm.llm_summary ? ' — ' + llm.llm_summary : '');\n\nconst output = {\n  ticker: c.ticker,\n  window: (c.window_minutes / 60) + 'h',\n  llm_sentiment: llmAgg,\n  model_sentiment: modelAgg,\n  disagreement: disagreeAgg,\n  n_articles: items.length,\n  top_items: top,\n  summary,\n  status: degraded ? 'degraded' : 'ok',\n};\n\nconst store_rows = perItem.map(p => ({\n  id: p.item.id,\n  headline: p.item.headline,\n  url: p.item.url,\n  source: p.item.source,\n  language: p.item.language,\n  published_at: p.item.published_at || null,\n  llm_score: p.llm_score,\n  model_score: p.model_score,\n  disagreement: p.disagreement,\n  raw: p.item,\n}));\n\nreturn [{ json: { output, store_rows, ticker: c.ticker } }];\n"
+      },
+      "id": "code-assemble",
+      "name": "Compute & Assemble",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/news/store",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ticker: $json.ticker, items: $json.store_rows }) }}",
+        "options": {}
+      },
+      "id": "http-store",
+      "name": "Persist News",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        -20
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Persist result -> final §3.1 output. A failed write to the news table\n// degrades the result rather than being silently ignored (§9.4).\nconst assembled = $('Compute & Assemble').first().json;\nconst persist = $json;\nconst out = { ...assembled.output };\nconst persistFailed = persist.error !== undefined || persist.stored === undefined;\nif (persistFailed) {\n  out.status = 'degraded';\n  const base = out.summary || '';\n  out.summary = (base.startsWith('degraded:') ? base : ('degraded: ' + base))\n    + ' [persist to news table failed]';\n}\nreturn [{ json: out }];\n"
+      },
+      "id": "code-finalize",
+      "name": "Finalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        -20
+      ]
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Fetch News",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch News": {
+      "main": [
+        [
+          {
+            "node": "Prep Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Fetch": {
+      "main": [
+        [
+          {
+            "node": "Has Items?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Items?": {
+      "main": [
+        [
+          {
+            "node": "Call /sentiment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Degraded Fetch?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Degraded Fetch?": {
+      "main": [
+        [
+          {
+            "node": "Degraded Output",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No-Coverage Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call /sentiment": {
+      "main": [
+        [
+          {
+            "node": "Model Scores",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Model Scores": {
+      "main": [
+        [
+          {
+            "node": "Build LLM Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build LLM Prompt": {
+      "main": [
+        [
+          {
+            "node": "Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Haiku": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Score",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Score (Retry)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score": {
+      "main": [
+        [
+          {
+            "node": "Parse Scores",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Scores": {
+      "main": [
+        [
+          {
+            "node": "Validate Scores",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Scores": {
+      "main": [
+        [
+          {
+            "node": "Scores Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scores Valid?": {
+      "main": [
+        [
+          {
+            "node": "LLM Scores OK",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Stricter Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Scores OK": {
+      "main": [
+        [
+          {
+            "node": "Compute & Assemble",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Stricter Prompt": {
+      "main": [
+        [
+          {
+            "node": "Score (Retry)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score (Retry)": {
+      "main": [
+        [
+          {
+            "node": "Parse Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Retry": {
+      "main": [
+        [
+          {
+            "node": "Validate Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Retry": {
+      "main": [
+        [
+          {
+            "node": "Retry Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Valid?": {
+      "main": [
+        [
+          {
+            "node": "LLM Scores OK (Retry)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "LLM Degraded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Scores OK (Retry)": {
+      "main": [
+        [
+          {
+            "node": "Compute & Assemble",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Degraded": {
+      "main": [
+        [
+          {
+            "node": "Compute & Assemble",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute & Assemble": {
+      "main": [
+        [
+          {
+            "node": "Persist News",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist News": {
+      "main": [
+        [
+          {
+            "node": "Finalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

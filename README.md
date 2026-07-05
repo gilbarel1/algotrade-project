@@ -56,10 +56,12 @@ Two layers joined by one HTTP boundary (§2 of the design):
 | **Python** | 3.11–3.13 | The quant service. (We develop on 3.13; see *Known gotchas* below.) |
 | **Git** | any recent | — |
 | **n8n** | 2.x (self-hosted) | Needed from Step 3 onward, not for the quant service itself. |
-| **OpenRouter account** | — | LLM access from Step 3 onward. |
+| **OpenRouter account** | — | LLM access from Step 3 onward (Technical + Sentiment agents). |
+| **NewsAPI account** | free tier | English news for the Sentiment Agent (Step 5). Optional — RSS still works without it. |
 
 You can stand up and verify the quant service (Steps 0–2) **without n8n and without any API
-keys**.
+keys**. The n8n agents need an OpenRouter key; the Sentiment Agent additionally uses a
+NewsAPI key for English coverage (it degrades gracefully to RSS-only without one).
 
 ---
 
@@ -69,8 +71,8 @@ keys**.
 algotrade-project/
 ├── quant_service/              # FastAPI service — all ML, indicators, PDF (§5)
 │   ├── app.py                  #   app entrypoint: uvicorn app:app --port 8000
-│   ├── routers/                #   one module per endpoint: ohlc, indicators, sentiment, report, validate
-│   ├── data/                   #   yahoo, newsapi, maya, rss, cache, ingest  (data ingestion)
+│   ├── routers/                #   one module per endpoint: ohlc, indicators, sentiment, news, report, validate
+│   ├── data/                   #   yahoo, newsapi, rss, news_store, maya, cache, ingest, tls  (data ingestion)
 │   ├── indicators/             #   calc  (pandas-ta computation behind /indicators)
 │   ├── nlp/                    #   finbert, hebert, language_detect   (sentiment models)
 │   ├── pdf/                    #   render (WeasyPrint), charts (matplotlib)
@@ -108,7 +110,18 @@ below for which step owns what.
 
 ## Setup & quick start
 
-> Current state (through **Step 4**): **`/ohlc`, `/indicators`, and `/sentiment` are real.**
+> Current state (through **Step 5**): the **Sentiment Agent sub-workflow**
+> (`n8n/agents/sentiment.json`) is live — it calls **`POST /news/fetch`** (NewsAPI EN +
+> Globes/Ynet RSS EN/HE, cleaned and deduped server-side, few-shot examples bundled in),
+> scores each headline twice (Claude Haiku 4.5 few-shot **and** `/sentiment`'s
+> FinBERT/HeBERT), computes the mean per-article **disagreement**, validates the LLM output
+> via `POST /validate` (agent `"sentiment"`), and persists both scores to the `news` table
+> via **`POST /news/store`** (§3.1, §9.4). News fetch/clean/persist run in the quant service
+> so n8n moves only compact items. To exercise it end-to-end set `NEWSAPI_API_KEY` in the
+> service environment (RSS still works without it) and widen `window_minutes` for a demo (the
+> 2h default is often empty). See `n8n/README_credentials.md → Sentiment Agent`.
+>
+> Earlier state (through **Step 4**): **`/ohlc`, `/indicators`, and `/sentiment` are real.**
 > `/ohlc` and `/indicators` serve cached OHLC from DuckDB and compute RSI/MACD/Bollinger/ATR
 > with `pandas-ta` (§5, §3.3), **lazily (re-)ingesting** whenever the cache can't cover the
 > requested `lookback_days` — so a symbol you haven't pre-pulled is fetched on first request,
@@ -153,7 +166,14 @@ pip install fastapi "uvicorn[standard]" "pydantic>=2" duckdb pyyaml jinja2
 pip install yfinance certifi pandas numpy
 # Step 2 — real /ohlc + /indicators also needs:
 pip install pandas-ta
+# Step 4 — /sentiment (FinBERT/HeBERT) also needs:
+pip install transformers torch
+# Step 5 — news fetch for the Sentiment Agent also needs:
+pip install httpx feedparser beautifulsoup4 truststore
 ```
+
+Through the **current state (Step 5)** the simplest path is just
+`pip install -r requirements.txt`, which covers everything above.
 
 ### 3. Configure environment
 
@@ -162,8 +182,20 @@ pip install pandas-ta
 # macOS/Linux:           cp ../.env.example ../.env
 ```
 
-**No API keys are required yet** — fill them in as later steps need them
-(see [Configuration & API keys](#configuration--api-keys)).
+**No keys are needed for the quant-service basics** (`/ohlc`, `/indicators`, `/sentiment`,
+`/validate`). For the **current state (Step 5)** fill in two keys as you reach the agents
+(see [Configuration & API keys](#configuration--api-keys)):
+
+- `OPENROUTER_API_KEY` — used by n8n for every LLM call (Technical + Sentiment agents).
+- `NEWSAPI_API_KEY` — used by the quant service's `/news/fetch` for English news (optional;
+  RSS-only works without it).
+
+> **The quant service reads keys from its own process environment — it does *not* load
+> `.env`.** `.env` is consumed by **n8n**. So the only key the *service* needs
+> (`NEWSAPI_API_KEY`) must be exported in the shell that runs `uvicorn` (see step 5). Leave
+> `DUCKDB_PATH` **unset** when you start uvicorn from `quant_service/` — its `.env` value is
+> relative to the repo root and would resolve to the wrong path from inside `quant_service/`
+> (see *Known gotchas*).
 
 ### 4. Initialize the DuckDB schema (§4.2)
 
@@ -176,7 +208,18 @@ python -c "import duckdb; print(sorted(r[0] for r in duckdb.connect('store.duckd
 
 ### 5. Run the service
 
+Export `NEWSAPI_API_KEY` in this shell first (so `/news/fetch` reaches NewsAPI — skip it to
+run RSS-only), then start uvicorn:
+
+```powershell
+# Windows (PowerShell), from quant_service/:
+$env:NEWSAPI_API_KEY = "<your-newsapi-key>"   # optional; omit for RSS-only
+python -m uvicorn app:app --port 8000
+```
+
 ```bash
+# macOS/Linux, from quant_service/:
+export NEWSAPI_API_KEY="<your-newsapi-key>"   # optional; omit for RSS-only
 uvicorn app:app --port 8000
 ```
 
@@ -255,6 +298,47 @@ Or browse interactively with the DuckDB CLI (`winget install DuckDB.cli`):
 duckdb store.duckdb        # then:  SELECT * FROM prices LIMIT 20;   (Ctrl-D to exit)
 ```
 
+### 8. Run the analysis agents in n8n (Steps 3 & 5)
+
+Two agent sub-workflows are live: the **Technical Agent** (`n8n/agents/technical.json`) and
+the **Sentiment Agent** (`n8n/agents/sentiment.json`). Both are driven from n8n and reach the
+quant service over HTTP. Full walkthrough — credential wiring, per-node URLs, and local
+Windows quirks — is in **[`n8n/README_credentials.md`](n8n/README_credentials.md)**; the
+short version:
+
+1. **Quant service running** (step 5 above), with `NEWSAPI_API_KEY` exported for the Sentiment
+   Agent's English coverage.
+2. In n8n, create the **OpenRouter** credential once (paste `OPENROUTER_API_KEY`).
+3. *Workflows → Import from File →* the agent JSON. Open its **Chat Model** node and re-select
+   your OpenRouter credential (imported JSONs carry a `REPLACE_AFTER_IMPORT` placeholder).
+4. Pin mock input on the **Execute Workflow Trigger** and run *Execute workflow*:
+   - Technical: `[{ "ticker":"TEVA.TA","lookback_days":180,"run_id":"r_test" }]`
+   - Sentiment: `[{ "ticker":"TEVA.TA","window_minutes":43200,"run_id":"r_test" }]`
+     (widen the 2-hour default — quiet names are often empty in a 2h window).
+
+**First, sanity-check the new news endpoints directly** (deterministic, no LLM needed) — with
+the service running:
+
+```bash
+# fetch + clean recent news (NewsAPI EN + Globes/Ynet RSS EN/HE), with few-shot examples:
+curl -s -X POST localhost:8000/news/fetch -H "content-type: application/json" -d '{"ticker":"TEVA.TA","window_minutes":43200}'
+# validate the Sentiment Agent's LLM boundary (agent "sentiment"):
+curl -s -X POST localhost:8000/validate   -H "content-type: application/json" -d '{"agent":"sentiment","payload":{"items":[{"id":"a1","score":1.5,"reasoning":"x"}],"summary":"s"}}'
+```
+
+The first returns cleaned `items` (stable `sha1(url)` ids) plus a `few_shot` array; re-running
+yields the same ids. The second returns `valid:false` with `items.0.score: Input should be
+less than or equal to 1`. (PowerShell: use `Invoke-RestMethod`, not the `curl` alias — see the
+expandable block in step 6.)
+
+A successful Sentiment run's **Finalize** node returns the §3.1 shape
+(`{ ticker, window, llm_sentiment, model_sentiment, disagreement, n_articles, top_items[],
+summary, status }`) and writes one row per article — **both** scores — into the `news` table:
+
+```bash
+python -c "import duckdb; print(duckdb.connect('store.duckdb').sql('SELECT id, symbol, language, llm_sentiment, model_sentiment, disagreement FROM news').df())"
+```
+
 ---
 
 ## Configuration & API keys
@@ -263,9 +347,11 @@ Defaults (watchlist, news/earnings windows, lookback, cron, report dir) live in
 `config/universe.yaml`; Risk Manager rubric thresholds in `config/rubric.yaml` (§4.4).
 Edit those rather than hardcoding values.
 
-Secrets come from environment variables (`.env`, gitignored). **None are required for the
-quant-service skeleton** — the endpoints return stubs and read no secrets. Fill keys in as
-the build reaches the step that uses them:
+Secrets come from environment variables (`.env`, gitignored). For the **current state
+(Step 5)** you need two: `OPENROUTER_API_KEY` (used by n8n for LLM calls) and, optionally,
+`NEWSAPI_API_KEY` (used by the quant service's `/news/fetch`). The quant service reads keys
+from its own process environment and does **not** load `.env` — export `NEWSAPI_API_KEY` in
+the shell that runs uvicorn (n8n loads `.env` itself). Everything else keeps its default:
 
 | Variable | First needed | Where to get it |
 |---|---|---|
@@ -291,7 +377,7 @@ The system is built and reviewed **one step at a time** (full detail in `CLAUDE.
 | 2 | `/ohlc` + `/indicators` real (`pandas-ta`) | ✅ done |
 | 3 | Technical Agent sub-workflow (n8n + Gemini Flash-Lite) + `/validate` endpoint | ✅ done |
 | 4 | `/sentiment` real (FinBERT + HeBERT) | ✅ done |
-| 5 | Sentiment Agent sub-workflow (dual scoring, few-shot, `news` table) | ⬜ |
+| 5 | Sentiment Agent sub-workflow (dual scoring, few-shot, `news` table) | ✅ done |
 | 6 | Earnings Agent (Maya scraping + self-consistency number extraction) | ⬜ |
 | 7 | Risk Manager three-stage critique loop | ⬜ |
 | 8 | Orchestrator fan-out + cost logging | ⬜ |
@@ -353,5 +439,18 @@ The system is built and reviewed **one step at a time** (full detail in `CLAUDE.
   `$env` form). (c) To test a sub-workflow standalone, **pin mock output on its Execute-Workflow
   trigger** (e.g. `[{ "ticker":"TEVA.TA","lookback_days":180,"run_id":"r_test" }]`) — otherwise
   `$json.ticker` is null and `/ohlc` returns 422. See `n8n/README_credentials.md`.
+- **Sentiment Agent HTTP nodes (Step 5):** the workflow has *five* HTTP nodes (`Fetch News`,
+  `Call /sentiment`, `Validate Scores`, `Validate Retry`, `Persist News`) — if `{{ $env.… }}`
+  is blocked, switch the URL to *Fixed* on **each** of them. Its trigger input is
+  `{ ticker, window_minutes, run_id }`.
+- **`NEWSAPI_API_KEY` must be in the *service* environment (Step 5):** the quant service does
+  not read `.env` (only n8n does), so export the key in the shell that runs `uvicorn` before
+  starting it. Without it, `/news/fetch` marks NewsAPI degraded and returns RSS-only results —
+  functional, but the Sentiment Agent will report `status: "degraded"`.
+- **Don't set `DUCKDB_PATH` when starting uvicorn from `quant_service/` (Step 5):** the
+  `.env` value `quant_service/store.duckdb` is relative to the **repo root**; exported into a
+  shell already inside `quant_service/` it resolves to `quant_service/quant_service/store.duckdb`
+  and `/news/store` fails with *"Cannot open file … cannot find the path specified."* Leave it
+  unset — the service defaults to the correct absolute path.
 - **`WeasyPrint` on Windows (Step 9):** needs the GTK runtime; we'll flag specifics when that
   step lands.

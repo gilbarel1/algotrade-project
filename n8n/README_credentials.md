@@ -41,3 +41,40 @@ Output (§3.3 + §3.4 status):
 `{ ticker, as_of, indicators: {rsi_14, macd{…}, bbands{…}, atr_14}, signal, summary, status }`.
 
 Cost logging to the `costs` table is deferred to Step 8 (orchestrator).
+
+### Sentiment Agent (`agents/sentiment.json`, Step 5)
+
+Input: `{ "ticker": "TEVA.TA", "window_minutes": 120, "run_id": "r_test" }`.
+The 2-hour default window is often empty for the quieter TA-35 names — widen it
+for a demo, e.g. `"window_minutes": 43200` (30 days), which is also the NewsAPI
+free-tier cap.
+
+Flow (§3.1): `POST /news/fetch` (NewsAPI EN + Globes/Ynet RSS EN/HE, cleaned
+server-side, returns items **and** the few-shot examples) → branch:
+
+- **Model scorer** — `POST /sentiment` (FinBERT for EN, HeBERT for HE).
+- **LLM scorer** — Claude Haiku 4.5 (temperature 0), few-shot from the fetch
+  response, scores each headline `-1..+1` → `POST /validate` (agent
+  `"sentiment"`, `schemas/sentiment.py`) → on invalid: one stricter retry → on
+  second failure the LLM side is marked degraded (the model side still counts).
+
+The two scores are combined in **Compute & Assemble**: aggregate `llm_sentiment`
+/ `model_sentiment` are the per-article means and `disagreement` is the mean
+per-article `|llm − model|` (§3.1). Both scores per article are written to the
+`news` table via `POST /news/store`. Only headlines/summaries and ids reach the
+LLM — never article bodies (§2 guardrail).
+
+Output (§3.1 + §3.4 status):
+`{ ticker, window, llm_sentiment, model_sentiment, disagreement, n_articles, top_items[], summary, status }`.
+
+Three terminal states: `ok` with scores; `ok` with `n_articles: 0` and neutral
+scores when there is genuinely no recent coverage (§13 — never padded); and
+`degraded` (with a reason) when a source, the LLM boundary, or the `news` write
+fails. Cost logging is deferred to Step 8.
+
+**Local verification notes** (Windows): use `http://127.0.0.1:8000` (not
+`localhost`, which n8n resolves to IPv6 first and refuses); if `{{ $env.… }}` is
+blocked in your n8n build, switch the HTTP node URL field to Fixed and paste the
+URL (this edits only n8n's DB copy, not the committed JSON). Start the quant
+service with `NEWSAPI_API_KEY` set in its environment; without a key the NewsAPI
+source degrades and the RSS feeds still return items.

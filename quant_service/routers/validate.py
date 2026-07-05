@@ -16,12 +16,14 @@ from fastapi import APIRouter
 from pydantic import BaseModel, ValidationError
 
 from schemas.technical import TechnicalNarration
+from schemas.sentiment import SentimentNarration
 
 router = APIRouter()
 
 # agent name -> Pydantic model guarding that agent's LLM boundary.
 SCHEMAS = {
     "technical": TechnicalNarration,
+    "sentiment": SentimentNarration,
 }
 
 

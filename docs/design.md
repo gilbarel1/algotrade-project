@@ -39,8 +39,8 @@ flowchart TD
     ORC -->|fan out per ticker| EA[Earnings Agent<br/>claude-haiku-4.5 + self-consistency]
     ORC -->|fan out per ticker| TA[Technical Agent<br/>gemini-2.5-flash-lite]
 
-    SA -->|HTTP| NEWS[NewsAPI / RSS]
     SA -->|HTTP| QS
+    QS -->|HTTP| NEWS[NewsAPI / RSS]
     EA -->|HTTP| MAYA[maya.tase.co.il<br/>EN + HE]
     TA -->|HTTP| QS
 
@@ -77,8 +77,9 @@ Each agent is an n8n sub-workflow. Sentiment, Earnings, and Technical run in par
   - **`llm_sentiment`** — Haiku 4.5 reads each article (translating Hebrew inline when needed) and returns a `-1..+1` score plus per-article reasoning. Prompt is **few-shot**, loaded from `prompts/sentiment_examples.jsonl` (labeled examples covering positive/negative/neutral and an English/Hebrew mix).
   - **`model_sentiment`** — the quant service's `/sentiment` endpoint. English text is scored by `ProsusAI/finbert`; Hebrew text by `avichr/heBERT_sentiment_analysis`. Outputs `-1..+1` per article and an aggregated score.
 - **Agreement metric.** `|llm − model|` per article; aggregate disagreement is the mean. High disagreement is **not** a failure — it is a feature reported to the Risk Manager and shown in the PDF.
-- **Sources.** NewsAPI (English); Globes/Reuters/Bloomberg/Calcalist-English RSS; Ynet/Calcalist Hebrew RSS as fallback.
+- **Sources.** NewsAPI (English); Globes/Reuters/Bloomberg/Calcalist-English RSS; Ynet/Calcalist Hebrew RSS as fallback. Fetching, §4.3 cleaning, and `news`-table persistence run server-side in the quant service (`/news/fetch`, `/news/store`) so n8n moves only compact, pre-cleaned items.
 - **Output (JSON).**
+  The aggregate `llm_sentiment` and `model_sentiment` are the **mean** of the per-article LLM and model scores; `disagreement` is the **mean of the per-article `|llm − model|`**. The per-article model scores come from `/sentiment`; the endpoint returns per-item scores only, so the aggregation and disagreement are computed in the sub-workflow.
   ```jsonc
   { "ticker":"TEVA.TA", "window":"2h",
     "llm_sentiment": -0.32, "model_sentiment": -0.18, "disagreement": 0.14,
@@ -236,6 +237,23 @@ watchlist: ["TEVA.TA","NICE.TA","LUMI.TA","POLI.TA","ESLT.TA"]
 news_window_minutes: 120
 earnings_window_days: 5
 ohlc_lookback_days: 180
+# Ticker -> query terms used to fetch news (§3.1). *.TA symbols are not searchable
+# on NewsAPI/RSS, so each ticker maps to the company's common name(s) (EN + HE).
+search_terms:
+  TEVA.TA: ["Teva"]
+  NICE.TA: ["NICE Ltd", "NICE Systems"]
+  LUMI.TA: ["Bank Leumi", "Leumi", "לאומי"]
+  POLI.TA: ["Bank Hapoalim", "Hapoalim", "הפועלים"]
+  ESLT.TA: ["Elbit Systems", "Elbit", "אלביט"]
+# RSS feeds fetched server-side by /news/fetch. EN feeds are primary; HE feeds are
+# the §3.1 fallback (LLM translates inline). NewsAPI covers EN separately.
+rss_feeds:
+  en:
+    - "https://www.globes.co.il/webservice/rss/rssfeeder.asmx/FeederNode?iID=1725"
+    - "https://www.calcalistech.com/ctechnews/home/0,7340,L-5211,00.xml"
+  he:
+    - "https://www.calcalist.co.il/GeneralRSS/0,16335,L-8,00.xml"
+    - "https://www.ynet.co.il/Integration/StoryRss6.xml"
 # Cron is evaluated in n8n's TZ setting; set TZ=Asia/Jerusalem (§11.1) so this reads as local.
 # Sun–Thu, hourly from 10:00 to 17:00 local time (covers TASE continuous trading ~09:30–17:25 IDT/IST).
 # Day-of-week: 0=Sunday in n8n cron. DST is handled by the TZ setting, not the cron expression.
@@ -256,6 +274,8 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
 | `POST /ohlc`       | Cached daily/intraday OHLC for a symbol                                      |
 | `POST /indicators` | RSI, MACD, Bollinger, ATR from cached OHLC                                   |
 | `POST /sentiment`  | FinBERT/HeBERT score for a batch of texts (auto-routes by detected language) |
+| `POST /news/fetch` | Fetch + clean recent news for a ticker (NewsAPI EN + RSS EN/HE) and return compact items plus the few-shot examples; keeps NewsAPI/RSS access and §4.3 cleaning server-side so n8n never fetches or parses raw feeds |
+| `POST /news/store` | Upsert per-article dual-sentiment scores into the `news` table (§4.2); n8n cannot write DuckDB directly |
 | `POST /report`     | Render PDF from Risk Manager output + run id                                 |
 | `POST /validate`   | Validate an agent's raw LLM JSON against its Pydantic schema in `schemas/` (the §9.4 LLM-boundary guardrail; n8n's embedded Python cannot import the repo's schemas, so validation is served over HTTP) |
 
@@ -280,6 +300,24 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
 { "scores":[{"id":"a1","score":0.62,"model":"finbert"},
              {"id":"a2","score":-0.18,"model":"hebert"}],
   "summary":"2 items scored: 1 EN (finbert), 1 HE (hebert)." }
+
+// POST /news/fetch
+{ "ticker":"TEVA.TA", "window_minutes":120 }
+{ "ticker":"TEVA.TA",
+  "items":[{"id":"<sha1(url)>","headline":"Teva beats Q1 estimates","summary":"…",
+            "source":"Globes","url":"https://…","published_at":"2026-06-22T09:14:00Z",
+            "language":"en"}, …],
+  "few_shot":[{"text":"…","language":"en","score":0.6,"reasoning":"…"}, …],
+  "summary":"7 items after cleaning: 5 EN (NewsAPI/RSS), 2 HE (RSS)." }
+// Partial-source failure degrades, never 500s: summary prefixed "degraded: <reason>".
+
+// POST /news/store
+{ "ticker":"TEVA.TA",
+  "items":[{"id":"<sha1(url)>","headline":"…","url":"https://…","source":"Globes",
+            "language":"en","published_at":"2026-06-22T09:14:00Z",
+            "llm_score":-0.6,"model_score":-0.4,"disagreement":0.2,
+            "raw":{ /* original fetched item */ }}, …] }
+{ "stored":7 }
 
 // POST /report
 { "run_id":"r_2026-06-22T13:00", "recommendations":[ /* per-ticker, see §6.3 */ ],
@@ -315,7 +353,7 @@ Top-level flow:
 
 | Sub-workflow | Input                                                  | Calls                       | Output |
 | ------------ | ------------------------------------------------------ | --------------------------- | ------ |
-| Sentiment    | `{ ticker, window_minutes, run_id }`                 | NewsAPI, RSS,`/sentiment` | §3.1  |
+| Sentiment    | `{ ticker, window_minutes, run_id }`                 | `/news/fetch`, `/sentiment`, `/news/store` (NewsAPI + RSS reached server-side) | §3.1  |
 | Earnings     | `{ ticker, window_days, run_id }`                    | maya.tase.co.il (EN/HE)     | §3.2  |
 | Technical    | `{ ticker, lookback_days, run_id }`                  | `/ohlc`, `/indicators`  | §3.3  |
 | Risk Manager | `{ ticker, sentiment, earnings, technical, run_id }` | (LLM only — three passes)  | §6.3  |
@@ -439,8 +477,8 @@ n8n-investment-team/
 │   └── README_credentials.md
 ├── quant_service/
 │   ├── app.py
-│   ├── routers/ {ohlc,indicators,sentiment,report}.py
-│   ├── data/ {yahoo.py, newsapi.py, maya.py, rss.py, cache.py, ingest.py}  # ingest = OHLC pull/clean CLI (python -m data.ingest)
+│   ├── routers/ {ohlc,indicators,sentiment,news,report,validate}.py  # news = /news/fetch + /news/store
+│   ├── data/ {yahoo.py, newsapi.py, maya.py, rss.py, news_store.py, tls.py, cache.py, ingest.py}  # ingest = OHLC pull/clean CLI (python -m data.ingest); news_store = news-table upsert; tls = OS-trust SSL context for httpx
 │   ├── indicators/ {calc.py}  # pandas-ta computation behind /indicators (§3.3, §5)
 │   ├── nlp/  {finbert.py, hebert.py, language_detect.py}
 │   ├── pdf/  {render.py, charts.py}
