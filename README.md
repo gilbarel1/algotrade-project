@@ -108,19 +108,24 @@ below for which step owns what.
 
 ## Setup & quick start
 
-> Current state (through **Step 3**): **`/ohlc` and `/indicators` are real** — they serve
-> cached OHLC from DuckDB and compute RSI/MACD/Bollinger/ATR with `pandas-ta` (§5, §3.3),
-> **lazily (re-)ingesting** whenever the cache can't cover the requested `lookback_days` —
-> so a symbol you haven't pre-pulled is fetched on first request, and a later request for a
-> wider window transparently widens the cache (order-independent, since the Technical agent
-> picks its lookback per task). The **Technical Agent n8n sub-workflow** (`n8n/agents/technical.json`)
-> is live: it calls `/ohlc` + `/indicators`, narrates with Gemini Flash-Lite, and validates the
-> LLM output via the new **`POST /validate`** endpoint (Pydantic schema in `schemas/technical.py`),
-> with a stricter-retry-then-`degraded` path (§3.3, §9.4). `/sentiment` and `/report` still return
-> **stubs matching the §5 contracts** (made real in Steps 4 and 9). `python -m data.ingest` remains
-> the batch pre-warm path (§4.1, §4.3). The quant-service endpoints (including `/validate`) are
-> verifiable without n8n or any API keys via `python smoke_test.py`; running the n8n sub-workflow
-> end-to-end needs n8n + an OpenRouter key (see `n8n/README_credentials.md`).
+> Current state (through **Step 4**): **`/ohlc`, `/indicators`, and `/sentiment` are real.**
+> `/ohlc` and `/indicators` serve cached OHLC from DuckDB and compute RSI/MACD/Bollinger/ATR
+> with `pandas-ta` (§5, §3.3), **lazily (re-)ingesting** whenever the cache can't cover the
+> requested `lookback_days` — so a symbol you haven't pre-pulled is fetched on first request,
+> and a later request for a wider window transparently widens the cache. **`/sentiment` now runs
+> fine-tuned transformers** (§5, §7): each item is routed by language (explicit field wins, else
+> Hebrew-codepoint detection) to **FinBERT** (`ProsusAI/finbert`, EN) or **HeBERT**
+> (`avichr/heBERT_sentiment_analysis`, HE), scored as `P(pos)−P(neg)` in `-1..+1`, batched per
+> model, with the model tag returned per item; weights cache under `HF_HOME` (**first call
+> downloads ~0.9 GB and is slow; later calls reuse the in-process pipeline**). The **Technical
+> Agent n8n sub-workflow** (`n8n/agents/technical.json`) is live: it calls `/ohlc` + `/indicators`,
+> narrates with Gemini Flash-Lite, and validates the LLM output via the **`POST /validate`**
+> endpoint (Pydantic schema in `schemas/technical.py`), with a stricter-retry-then-`degraded`
+> path (§3.3, §9.4). `/report` still returns a **stub matching the §5 contract** (made real in
+> Step 9). `python -m data.ingest` remains the batch pre-warm path (§4.1, §4.3). The quant-service
+> endpoints (including `/validate`) are verifiable without n8n or any API keys via
+> `python smoke_test.py`; running the n8n sub-workflow end-to-end needs n8n + an OpenRouter key
+> (see `n8n/README_credentials.md`).
 
 ### 1. Clone and create a virtualenv
 
@@ -285,7 +290,7 @@ The system is built and reviewed **one step at a time** (full detail in `CLAUDE.
 | 1 | Data ingestion: Yahoo OHLC + cleaning → `prices` (`python -m data.ingest`) | ✅ done |
 | 2 | `/ohlc` + `/indicators` real (`pandas-ta`) | ✅ done |
 | 3 | Technical Agent sub-workflow (n8n + Gemini Flash-Lite) + `/validate` endpoint | ✅ done |
-| 4 | `/sentiment` real (FinBERT + HeBERT) | ⬜ |
+| 4 | `/sentiment` real (FinBERT + HeBERT) | ✅ done |
 | 5 | Sentiment Agent sub-workflow (dual scoring, few-shot, `news` table) | ⬜ |
 | 6 | Earnings Agent (Maya scraping + self-consistency number extraction) | ⬜ |
 | 7 | Risk Manager three-stage critique loop | ⬜ |
@@ -328,6 +333,17 @@ The system is built and reviewed **one step at a time** (full detail in `CLAUDE.
   an alias **removed in numpy 2.0**, so importing them crashes on the numpy 2.x this project
   uses. `indicators/calc.py` restores the alias with a one-line, non-destructive shim
   (`np.NaN = np.nan`) **before** importing `pandas_ta` — no numpy downgrade, no action needed.
+- **First `/sentiment` call is slow (Step 4):** the first request for each language downloads
+  the model weights (FinBERT + HeBERT) into `HF_HOME` (default `.hf_cache`,
+  gitignored) and loads them into memory — expect tens of seconds and **≈ 1.7 GB on disk** (on
+  Windows the cache is copied rather than symlinked, so blobs are duplicated into the snapshot
+  dir). Subsequent calls in the same
+  process reuse the in-process pipeline and are fast. Behind a **corporate TLS proxy**, the
+  Hugging Face download uses `httpx`, which — unlike `yfinance`'s backend — ignores
+  `SSL_CERT_FILE`; `nlp/finbert.py: _configure_hf_tls()` reuses the same `configure_tls()` CA
+  bundle and registers an httpx client factory that trusts it (chain/hostname/expiry checks stay
+  on; only OpenSSL's strict structural check, which some corporate CAs violate, is relaxed) —
+  **no action needed** on Windows.
 - **Running an n8n sub-workflow locally (Step 3+):** three Windows quirks worth knowing.
   (a) n8n HTTP nodes reach the quant service at **`http://127.0.0.1:8000`**, not `localhost` —
   Node resolves `localhost` to IPv6 (`::1`) first and uvicorn binds IPv4, giving

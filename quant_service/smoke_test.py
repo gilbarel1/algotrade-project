@@ -7,6 +7,10 @@ Windows/PowerShell, macOS, and Linux — no curl quoting pitfalls.
 Usage (with the service running via `uvicorn app:app --port 8000`):
     python smoke_test.py
     python smoke_test.py http://localhost:8000
+
+Note: the first `/sentiment` call downloads/loads the FinBERT + HeBERT weights
+(cached under HF_HOME), which can take tens of seconds — hence the generous
+per-request timeout below.
 """
 
 import json
@@ -64,7 +68,8 @@ def post(path, payload):
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    # Generous timeout: the first /sentiment call loads the HF models (see module docstring).
+    with urllib.request.urlopen(req, timeout=180) as resp:
         return resp.status, json.loads(resp.read().decode("utf-8"))
 
 
