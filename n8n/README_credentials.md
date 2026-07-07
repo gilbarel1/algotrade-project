@@ -72,6 +72,44 @@ scores when there is genuinely no recent coverage (§13 — never padded); and
 `degraded` (with a reason) when a source, the LLM boundary, or the `news` write
 fails. Cost logging is deferred to Step 8.
 
+### Earnings Agent (`agents/earnings.json`, Step 6)
+
+Input: `{ "ticker": "TEVA.TA", "window_days": 5, "run_id": "r_test" }`.
+The 5-day default window is often empty — widen it for a demo, e.g.
+`"window_days": 30`. **Server prerequisite:** the quant service machine needs
+the Playwright browser once: `python -m playwright install chromium`.
+
+Flow (§3.2): `POST /earnings/fetch` (Maya EN page rendered server-side in
+headless Chromium, HE fallback, §4.3 cleaning; returns compact items — the
+newest with a bounded text excerpt — **and** the few-shot examples from
+`prompts/earnings_examples.jsonl`) → two LLM boundaries, both Claude Haiku 4.5:
+
+- **Classify/translate** (temperature 0) — `kind`, `materiality`, English
+  `summary`, and `title_en` for Hebrew titles → `POST /validate` (agent
+  `"earnings"`) → on invalid: one stricter retry → on second failure the
+  classified fields are null and the result is degraded (never guessed).
+- **Self-consistency extraction** (§3.2: n=3, temperature 0.3) — one Code node
+  emits three identical tasks; the single Extract chain runs once per item, so
+  three independent samples of `{revenue, eps, guidance}`, each **verbatim
+  from the text or null**. Each sample is validated (agent
+  `"earnings_extraction"`, stricter retry per sample); a sample that fails
+  twice becomes a non-vote. The **Majority Vote** Code node then commits a
+  figure only when ≥2 samples agree after units normalization
+  (`{value, confidence: 2|3}`) and marks everything else
+  `{"value":"ambiguous","confidence":1}` — the vote is deterministic code, so
+  the LLM can never vouch for its own numbers.
+
+The classified disclosure + voted figures are written to the `earnings` table
+via `POST /earnings/store`.
+
+Output (§3.2 + §3.4 status):
+`{ ticker, latest_disclosure{date,type,language,title,url,title_en,summary,extracted}, is_earnings_window, materiality, summary, status }`.
+
+Three terminal states: `ok` with a classified disclosure; `ok` with
+`latest_disclosure: null` when the scrape is healthy but nothing matched the
+window (never padded); and `degraded` (with a reason) when the scrape, an LLM
+boundary, or the `earnings` write fails. Cost logging is deferred to Step 8.
+
 **Local verification notes** (Windows): use `http://127.0.0.1:8000` (not
 `localhost`, which n8n resolves to IPv6 first and refuses); if `{{ $env.… }}` is
 blocked in your n8n build, switch the HTTP node URL field to Fixed and paste the

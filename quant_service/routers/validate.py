@@ -17,13 +17,18 @@ from pydantic import BaseModel, ValidationError
 
 from schemas.technical import TechnicalNarration
 from schemas.sentiment import SentimentNarration
+from schemas.earnings import EarningsClassification, EarningsExtractionSample
 
 router = APIRouter()
 
-# agent name -> Pydantic model guarding that agent's LLM boundary.
+# agent name -> Pydantic model guarding that agent's LLM boundary. The
+# Earnings Agent has two boundaries (§3.2): the classify/translate pass and
+# each self-consistency extraction sample.
 SCHEMAS = {
     "technical": TechnicalNarration,
     "sentiment": SentimentNarration,
+    "earnings": EarningsClassification,
+    "earnings_extraction": EarningsExtractionSample,
 }
 
 

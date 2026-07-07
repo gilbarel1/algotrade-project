@@ -22,6 +22,8 @@ httpx
 beautifulsoup4
 feedparser
 truststore        # OS-native TLS trust for httpx (corporate-proxy CAs); verify stays on
+playwright        # Maya is a JS SPA behind bot protection; rendered headless (Step 6).
+                  # One-time browser download: python -m playwright install chromium
 
 # PDF + charts (Step 9)
 weasyprint

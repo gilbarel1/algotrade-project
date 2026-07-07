@@ -41,7 +41,8 @@ flowchart TD
 
     SA -->|HTTP| QS
     QS -->|HTTP| NEWS[NewsAPI / RSS]
-    EA -->|HTTP| MAYA[maya.tase.co.il<br/>EN + HE]
+    EA -->|HTTP| QS
+    QS -->|headless browser| MAYA[maya.tase.co.il<br/>EN + HE]
     TA -->|HTTP| QS
 
     SA --> AGG[Aggregator]
@@ -93,12 +94,13 @@ Each agent is an n8n sub-workflow. Sentiment, Earnings, and Technical run in par
 
 - **Role.** Detect recent MAYA disclosures for the ticker, classify them (earnings / guidance / material event / other), and extract headline financial numbers **only when present verbatim** in the source.
 - **Self-consistency for numbers.** The language model is sampled **three times at `temperature=0.3`** for every number it extracts (revenue, EPS, guidance figures). A figure is committed only when at least two of the three samples agree (string-exact match after units normalization). Otherwise the field is marked `"ambiguous"` and shown that way in the report — never silently filled.
-- **Sources.** `maya.tase.co.il/en/reports/companies` primary; the Hebrew page as fallback with LLM translation.
+- **Sources.** `maya.tase.co.il/en/reports/companies` primary; the Hebrew page as fallback with LLM translation. The Maya site is a JavaScript SPA behind bot protection, so scraping happens **server-side in the quant service** (`/earnings/fetch`, Playwright headless Chromium) — n8n moves only compact disclosure items, mirroring the news pattern (§3.1).
 - **Output (JSON).**
   ```jsonc
   { "ticker":"TEVA.TA",
     "latest_disclosure":{"date":"2026-06-19","type":"earnings","language":"en",
                           "title":"Q1 2026 results","url":"https://maya.tase.co.il/…",
+                          "title_en":null,  // English translation of a Hebrew title; null for EN disclosures (§8.1 translation flag)
                           "summary":"Q1 beat on revenue; guidance reaffirmed.",
                           "extracted":{"revenue":{"value":"$4.1B","confidence":3},
                                        "eps":{"value":"$0.62","confidence":3},
@@ -181,7 +183,7 @@ This visibly demonstrates non-trivial prompt engineering, makes the model's reas
 | OHLC (daily + intraday) | Yahoo Finance via`yfinance`                                                    | Free; ~60d of 1–5m bars, ~730d of 1h bars | Alpha Vantage (25 req/day — cache hard)                |
 | News (English)          | NewsAPI                                                                          | Free tier 100 req/day                      | Targeted RSS (Globes, Reuters, Bloomberg, Calcalist EN) |
 | News (Hebrew, fallback) | Ynet / Calcalist RSS                                                             | Free RSS; LLM translates                   | —                                                      |
-| Earnings disclosures    | `maya.tase.co.il/en/reports/companies` (HTML)                                  | Free, English where available              | Hebrew Maya + LLM translation                           |
+| Earnings disclosures    | `maya.tase.co.il/en/reports/companies` (JS SPA, rendered via Playwright headless Chromium server-side) | Free, English where available; best-effort (§13) | Hebrew Maya + LLM translation                           |
 | Market context          | Yahoo Finance for`^TA125.TA`, `^GSPC`, `^VIX`                              | Free                                       | —                                                      |
 | Fine-tuned sentiment    | Hugging Face`ProsusAI/finbert` (EN), `avichr/heBERT_sentiment_analysis` (HE) | Local inference via`transformers`        | —                                                      |
 
@@ -276,6 +278,8 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
 | `POST /sentiment`  | FinBERT/HeBERT score for a batch of texts (auto-routes by detected language) |
 | `POST /news/fetch` | Fetch + clean recent news for a ticker (NewsAPI EN + RSS EN/HE) and return compact items plus the few-shot examples; keeps NewsAPI/RSS access and §4.3 cleaning server-side so n8n never fetches or parses raw feeds |
 | `POST /news/store` | Upsert per-article dual-sentiment scores into the `news` table (§4.2); n8n cannot write DuckDB directly |
+| `POST /earnings/fetch` | Scrape + clean recent Maya disclosures for a ticker (EN primary, HE fallback; Playwright headless Chromium) and return compact items — the newest with a bounded text excerpt — plus the few-shot examples; keeps SPA rendering, bot-protection handling, and §4.3 cleaning server-side so n8n never touches raw pages |
+| `POST /earnings/store` | Upsert the classified disclosure + self-consistency extraction into the `earnings` table (§4.2); n8n cannot write DuckDB directly |
 | `POST /report`     | Render PDF from Risk Manager output + run id                                 |
 | `POST /validate`   | Validate an agent's raw LLM JSON against its Pydantic schema in `schemas/` (the §9.4 LLM-boundary guardrail; n8n's embedded Python cannot import the repo's schemas, so validation is served over HTTP) |
 
@@ -319,6 +323,31 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
             "raw":{ /* original fetched item */ }}, …] }
 { "stored":7 }
 
+// POST /earnings/fetch
+{ "ticker":"TEVA.TA", "window_days":5 }
+{ "ticker":"TEVA.TA",
+  "items":[{"id":"<sha1(symbol|url)>","symbol":"TEVA.TA",
+            "published_at":"2026-06-19T06:05:00+00:00",
+            "title":"Q1 2026 results","url":"https://maya.tase.co.il/…",
+            "language":"en",
+            "excerpt":"Teva … revenues were $4.1 billion …"}, …],
+  "few_shot":[{"title":"…","excerpt":"…","language":"en","kind":"earnings",
+               "materiality":"high","reasoning":"…"}, …],
+  "summary":"2 disclosure(s) in window: 2 EN, 0 HE (window 5d)." }
+// Only the newest item carries `excerpt` (the verbatim source for §3.2 extraction).
+// Scrape failure degrades, never 500s: summary prefixed "degraded: <reason>".
+
+// POST /earnings/store
+{ "ticker":"TEVA.TA",
+  "items":[{"id":"<sha1(symbol|url)>","published_at":"2026-06-19T06:05:00+00:00",
+            "language":"en","title":"Q1 2026 results","url":"https://…",
+            "kind":"earnings","materiality":"high",
+            "summary":"Q1 beat on revenue; guidance reaffirmed.",
+            "extracted":{"revenue":{"value":"$4.1B","confidence":3},
+                         "eps":{"value":"$0.62","confidence":3},
+                         "guidance":{"value":"ambiguous","confidence":1}}}] }
+{ "stored":1 }
+
 // POST /report
 { "run_id":"r_2026-06-22T13:00", "recommendations":[ /* per-ticker, see §6.3 */ ],
   "summary":"3 long, 1 hold, 1 avoid." }
@@ -354,7 +383,7 @@ Top-level flow:
 | Sub-workflow | Input                                                  | Calls                       | Output |
 | ------------ | ------------------------------------------------------ | --------------------------- | ------ |
 | Sentiment    | `{ ticker, window_minutes, run_id }`                 | `/news/fetch`, `/sentiment`, `/news/store` (NewsAPI + RSS reached server-side) | §3.1  |
-| Earnings     | `{ ticker, window_days, run_id }`                    | maya.tase.co.il (EN/HE)     | §3.2  |
+| Earnings     | `{ ticker, window_days, run_id }`                    | `/earnings/fetch`, `/validate`, `/earnings/store` (Maya EN/HE reached server-side via headless browser) | §3.2  |
 | Technical    | `{ ticker, lookback_days, run_id }`                  | `/ohlc`, `/indicators`  | §3.3  |
 | Risk Manager | `{ ticker, sentiment, earnings, technical, run_id }` | (LLM only — three passes)  | §6.3  |
 
@@ -477,8 +506,8 @@ n8n-investment-team/
 │   └── README_credentials.md
 ├── quant_service/
 │   ├── app.py
-│   ├── routers/ {ohlc,indicators,sentiment,news,report,validate}.py  # news = /news/fetch + /news/store
-│   ├── data/ {yahoo.py, newsapi.py, maya.py, rss.py, news_store.py, tls.py, cache.py, ingest.py}  # ingest = OHLC pull/clean CLI (python -m data.ingest); news_store = news-table upsert; tls = OS-trust SSL context for httpx
+│   ├── routers/ {ohlc,indicators,sentiment,news,earnings,report,validate}.py  # news = /news/fetch + /news/store; earnings = /earnings/fetch + /earnings/store
+│   ├── data/ {yahoo.py, newsapi.py, maya.py, rss.py, news_store.py, earnings_store.py, textclean.py, tls.py, cache.py, ingest.py}  # ingest = OHLC pull/clean CLI (python -m data.ingest); news_store/earnings_store = table upserts; textclean = shared §4.3 text cleaning + term matching; maya = Playwright scraper; tls = OS-trust SSL context for httpx
 │   ├── indicators/ {calc.py}  # pandas-ta computation behind /indicators (§3.3, §5)
 │   ├── nlp/  {finbert.py, hebert.py, language_detect.py}
 │   ├── pdf/  {render.py, charts.py}
@@ -552,7 +581,7 @@ The grader's rubric explicitly rewards "understanding of solution limitations." 
 
 - **News coverage of TA-35 mid-caps is patchy** outside the largest names. Sentiment for a sparsely-covered ticker will legitimately be thin; the report shows article counts and never pads.
 - **HeBERT is a general Hebrew sentiment model, not finance-specific.** Performance on financial-news Hebrew is worse than FinBERT on financial-news English; the evaluation harness measures this rather than glossing it.
-- **Maya scraping is best-effort.** Layout changes can break the parser; the fallback is widening to the Hebrew page, which loses some structural fields. The earnings agent will mark fields `ambiguous` rather than guess.
+- **Maya scraping is best-effort.** The site is a JavaScript SPA behind bot protection, so it is rendered server-side in a headless browser (Playwright Chromium); layout changes or a bot-block can still break the harvest. The fallback is widening to the Hebrew page, which loses some structural fields. The earnings agent will mark fields `ambiguous` — or degrade to "no recent disclosure" — rather than guess.
 - **The Risk Manager's three-pass loop reduces overconfidence but does not guarantee correctness.** It is a structured reasoning aid, not a financial-validity guarantee. The PDF disclaims this explicitly.
 - **No live execution and no return measurement.** The system produces recommendations and rationales; it does not measure whether those recommendations would have made money. A backtest is a natural next step and is listed in `docs/results.md` as future work.
 - **OpenRouter pricing and model availability** can change. The system is designed for one-field model swaps to absorb this.

@@ -71,8 +71,8 @@ NewsAPI key for English coverage (it degrades gracefully to RSS-only without one
 algotrade-project/
 ├── quant_service/              # FastAPI service — all ML, indicators, PDF (§5)
 │   ├── app.py                  #   app entrypoint: uvicorn app:app --port 8000
-│   ├── routers/                #   one module per endpoint: ohlc, indicators, sentiment, news, report, validate
-│   ├── data/                   #   yahoo, newsapi, rss, news_store, maya, cache, ingest, tls  (data ingestion)
+│   ├── routers/                #   one module per endpoint: ohlc, indicators, sentiment, news, earnings, report, validate
+│   ├── data/                   #   yahoo, newsapi, rss, news_store, maya, earnings_store, textclean, cache, ingest, tls
 │   ├── indicators/             #   calc  (pandas-ta computation behind /indicators)
 │   ├── nlp/                    #   finbert, hebert, language_detect   (sentiment models)
 │   ├── pdf/                    #   render (WeasyPrint), charts (matplotlib)
@@ -110,7 +110,21 @@ below for which step owns what.
 
 ## Setup & quick start
 
-> Current state (through **Step 5**): the **Sentiment Agent sub-workflow**
+> Current state (through **Step 6**): the **Earnings Agent sub-workflow**
+> (`n8n/agents/earnings.json`) is live — it calls **`POST /earnings/fetch`** (the Maya
+> disclosure page is a JS SPA behind bot protection, so it's rendered **server-side in
+> headless Playwright Chromium**, EN page primary / HE fallback, cleaned and term-matched per
+> §4.3), classifies/translates the latest disclosure with Claude Haiku 4.5 at temperature 0
+> (validated via `POST /validate`, agent `"earnings"`), then extracts `{revenue, eps,
+> guidance}` with **self-consistency sampling** (§3.2: three samples at temperature 0.3, each
+> Pydantic-validated as agent `"earnings_extraction"`, then a deterministic majority vote —
+> a figure is committed with `confidence: 2|3` only when ≥2 samples agree *verbatim after
+> units normalization*, anything else is `"ambiguous"`, **never fabricated**). The classified
+> disclosure + voted figures persist to the `earnings` table via **`POST /earnings/store`**.
+> One-time setup on the service machine: `python -m playwright install chromium`. See
+> `n8n/README_credentials.md → Earnings Agent`.
+>
+> Earlier state (through **Step 5**): the **Sentiment Agent sub-workflow**
 > (`n8n/agents/sentiment.json`) is live — it calls **`POST /news/fetch`** (NewsAPI EN +
 > Globes/Ynet RSS EN/HE, cleaned and deduped server-side, few-shot examples bundled in),
 > scores each headline twice (Claude Haiku 4.5 few-shot **and** `/sentiment`'s
@@ -170,10 +184,13 @@ pip install pandas-ta
 pip install transformers torch
 # Step 5 — news fetch for the Sentiment Agent also needs:
 pip install httpx feedparser beautifulsoup4 truststore
+# Step 6 — Maya scraping for the Earnings Agent also needs:
+pip install playwright
+python -m playwright install chromium   # one-time headless-browser download (~150 MB)
 ```
 
-Through the **current state (Step 5)** the simplest path is just
-`pip install -r requirements.txt`, which covers everything above.
+Through the **current state (Step 6)** the simplest path is
+`pip install -r requirements.txt` followed by `python -m playwright install chromium`.
 
 ### 3. Configure environment
 
@@ -298,23 +315,26 @@ Or browse interactively with the DuckDB CLI (`winget install DuckDB.cli`):
 duckdb store.duckdb        # then:  SELECT * FROM prices LIMIT 20;   (Ctrl-D to exit)
 ```
 
-### 8. Run the analysis agents in n8n (Steps 3 & 5)
+### 8. Run the analysis agents in n8n (Steps 3, 5 & 6)
 
-Two agent sub-workflows are live: the **Technical Agent** (`n8n/agents/technical.json`) and
-the **Sentiment Agent** (`n8n/agents/sentiment.json`). Both are driven from n8n and reach the
-quant service over HTTP. Full walkthrough — credential wiring, per-node URLs, and local
-Windows quirks — is in **[`n8n/README_credentials.md`](n8n/README_credentials.md)**; the
-short version:
+Three agent sub-workflows are live: the **Technical Agent** (`n8n/agents/technical.json`),
+the **Sentiment Agent** (`n8n/agents/sentiment.json`), and the **Earnings Agent**
+(`n8n/agents/earnings.json`). All are driven from n8n and reach the quant service over HTTP.
+Full walkthrough — credential wiring, per-node URLs, and local Windows quirks — is in
+**[`n8n/README_credentials.md`](n8n/README_credentials.md)**; the short version:
 
 1. **Quant service running** (step 5 above), with `NEWSAPI_API_KEY` exported for the Sentiment
    Agent's English coverage.
 2. In n8n, create the **OpenRouter** credential once (paste `OPENROUTER_API_KEY`).
-3. *Workflows → Import from File →* the agent JSON. Open its **Chat Model** node and re-select
+3. *Workflows → Import from File →* the agent JSON. Open its **Chat Model** node(s) and re-select
    your OpenRouter credential (imported JSONs carry a `REPLACE_AFTER_IMPORT` placeholder).
+   The Earnings Agent has **two** Chat Model nodes (t=0 classification, t=0.3 extraction).
 4. Pin mock input on the **Execute Workflow Trigger** and run *Execute workflow*:
    - Technical: `[{ "ticker":"TEVA.TA","lookback_days":180,"run_id":"r_test" }]`
    - Sentiment: `[{ "ticker":"TEVA.TA","window_minutes":43200,"run_id":"r_test" }]`
      (widen the 2-hour default — quiet names are often empty in a 2h window).
+   - Earnings: `[{ "ticker":"TEVA.TA","window_days":30,"run_id":"r_test" }]`
+     (widen the 5-day default — most names have no disclosure in any given week).
 
 **First, sanity-check the new news endpoints directly** (deterministic, no LLM needed) — with
 the service running:
@@ -330,6 +350,28 @@ The first returns cleaned `items` (stable `sha1(url)` ids) plus a `few_shot` arr
 yields the same ids. The second returns `valid:false` with `items.0.score: Input should be
 less than or equal to 1`. (PowerShell: use `Invoke-RestMethod`, not the `curl` alias — see the
 expandable block in step 6.)
+
+**Likewise for the earnings endpoints** (the fetch takes ~15–30 s — it drives a headless
+browser):
+
+```bash
+# scrape + clean recent Maya disclosures (newest item carries the text excerpt):
+curl -s -X POST localhost:8000/earnings/fetch -H "content-type: application/json" -d '{"ticker":"TEVA.TA","window_days":30}'
+# validate the two Earnings LLM boundaries:
+curl -s -X POST localhost:8000/validate -H "content-type: application/json" -d '{"agent":"earnings","payload":{"kind":"rumor","materiality":"high","summary":"s"}}'
+curl -s -X POST localhost:8000/validate -H "content-type: application/json" -d '{"agent":"earnings_extraction","payload":{"revenue":"$4.1B","eps":null,"guidance":null}}'
+```
+
+The first returns disclosure `items` (or a `degraded:` summary if Maya blocks the scrape —
+never a 500); the second returns `valid:false` (`kind: Input should be 'earnings', …`); the
+third returns `valid:true`.
+
+A successful Earnings run's **Finalize** node returns the §3.2 shape and writes the
+classified disclosure into the `earnings` table:
+
+```bash
+python -c "import duckdb; print(duckdb.connect('store.duckdb').sql('SELECT id, symbol, kind, materiality, extracted FROM earnings').df())"
+```
 
 A successful Sentiment run's **Finalize** node returns the §3.1 shape
 (`{ ticker, window, llm_sentiment, model_sentiment, disagreement, n_articles, top_items[],
@@ -378,7 +420,7 @@ The system is built and reviewed **one step at a time** (full detail in `CLAUDE.
 | 3 | Technical Agent sub-workflow (n8n + Gemini Flash-Lite) + `/validate` endpoint | ✅ done |
 | 4 | `/sentiment` real (FinBERT + HeBERT) | ✅ done |
 | 5 | Sentiment Agent sub-workflow (dual scoring, few-shot, `news` table) | ✅ done |
-| 6 | Earnings Agent (Maya scraping + self-consistency number extraction) | ⬜ |
+| 6 | Earnings Agent (Maya scraping + self-consistency number extraction) | ✅ done |
 | 7 | Risk Manager three-stage critique loop | ⬜ |
 | 8 | Orchestrator fan-out + cost logging | ⬜ |
 | 9 | `/report` real (WeasyPrint + Jinja2) | ⬜ |
@@ -452,5 +494,17 @@ The system is built and reviewed **one step at a time** (full detail in `CLAUDE.
   shell already inside `quant_service/` it resolves to `quant_service/quant_service/store.duckdb`
   and `/news/store` fails with *"Cannot open file … cannot find the path specified."* Leave it
   unset — the service defaults to the correct absolute path.
+- **Earnings Agent HTTP nodes (Step 6):** the workflow has *six* HTTP nodes (`Fetch
+  Disclosures`, two classification `Validate …` nodes, two sample `Validate …` nodes,
+  `Persist Earnings`) — if `{{ $env.… }}` is blocked, switch the URL to *Fixed* on **each**.
+  Its trigger input is `{ ticker, window_days, run_id }`, and it has **two** Chat Model nodes
+  to re-credential after import.
+- **`/earnings/fetch` needs the Playwright browser (Step 6):** run
+  `python -m playwright install chromium` once in the service's environment. Without it the
+  endpoint degrades with `chromium missing; run: python -m playwright install chromium`
+  (no 500, no fabrication). The scrape itself is **best-effort** (§13): Maya sits behind
+  Imperva bot protection, so a `degraded:` summary on some runs is expected behavior — the
+  agent then reports "no recent disclosure" rather than guessing. Results are TTL-cached for
+  10 minutes, so an orchestrator run scrapes once, not once per ticker.
 - **`WeasyPrint` on Windows (Step 9):** needs the GTK runtime; we'll flag specifics when that
   step lands.

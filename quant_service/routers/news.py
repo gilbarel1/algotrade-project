@@ -20,15 +20,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 from typing import Any, Dict, List, Optional
 
 import yaml
-from bs4 import BeautifulSoup
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from data import cache, news_store, newsapi, rss
+from data.textclean import clean_text, mentions_term
 from nlp import language_detect
 
 router = APIRouter()
@@ -69,46 +68,8 @@ def _item_id(url: str) -> str:
 # in the RSS <description>, hundreds of characters of markup. That must not reach
 # the LLM prompt or /sentiment (§2: only short text crosses the boundary) or be
 # stored as-is, so summaries are stripped to plain text and bounded.
+# Cleaning/matching helpers are shared with the Maya scraper via data/textclean.
 _SUMMARY_MAX = 300
-
-
-def _clean_text(value: str, limit: Optional[int] = None) -> str:
-    """Strip HTML tags, decode entities, and collapse whitespace; optionally cap length."""
-    if not value:
-        return ""
-    text = BeautifulSoup(value, "html.parser").get_text(" ")
-    text = re.sub(r"\s+", " ", text).strip()
-    if limit and len(text) > limit:
-        text = text[:limit].rstrip() + "…"
-    return text
-
-
-_LATIN = re.compile(r"[A-Za-z]")
-
-
-def _term_matches(term: str, haystack: str) -> bool:
-    """True if `term` occurs in `haystack` (already lowercased) as a whole word.
-
-    Latin terms use word boundaries so short names don't match inside longer
-    words (e.g. "Leumi" must not match "Leumit"). Hebrew has no case and attaches
-    prefixes (ב/ה/ו/כ/ל/מ/ש) directly to nouns, so a Latin-style boundary would
-    wrongly reject legitimate prefixed forms *and* a bare substring wrongly
-    accepts collisions (the classic "טבע" inside "מטבע"/currency). We therefore
-    require Hebrew terms to be distinctive multi-token names (see universe.yaml)
-    and match them as substrings.
-    """
-    term = term.strip().lower()
-    if not term:
-        return False
-    if _LATIN.search(term):
-        return re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", haystack) is not None
-    return term in haystack
-
-
-def _mentions_term(headline: str, summary: str, terms: List[str]) -> bool:
-    """§4.3: keep an item only if a term appears in its (cleaned) headline/summary text."""
-    haystack = f"{headline} {summary}".lower()
-    return any(_term_matches(t, haystack) for t in terms)
 
 
 def _clean(raw_items: List[dict], terms: List[str]) -> List[dict]:
@@ -125,9 +86,9 @@ def _clean(raw_items: List[dict], terms: List[str]) -> List[dict]:
         url = (item.get("url") or "").strip()
         if not url or url in seen:
             continue
-        headline = _clean_text(item.get("headline", ""))
-        summary = _clean_text(item.get("summary", ""), _SUMMARY_MAX)
-        if not _mentions_term(headline, summary, terms):
+        headline = clean_text(item.get("headline", ""))
+        summary = clean_text(item.get("summary", ""), _SUMMARY_MAX)
+        if not mentions_term(headline, summary, terms=terms):
             continue
         seen.add(url)
         language = item.get("language") or language_detect.detect(
