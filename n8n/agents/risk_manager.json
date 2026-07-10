@@ -1,1 +1,576 @@
-{}
+{
+  "name": "Risk Manager (§3.4 three-stage critique loop)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "ticker", "type": "string" },
+            { "name": "sentiment", "type": "object" },
+            { "name": "earnings", "type": "object" },
+            { "name": "technical", "type": "object" },
+            { "name": "run_id", "type": "string" }
+          ]
+        }
+      },
+      "id": "trigger-risk",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-1700, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/riskmanager/context",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ticker: $json.ticker, sentiment: $json.sentiment, earnings: $json.earnings, technical: $json.technical }) }}",
+        "options": {}
+      },
+      "id": "http-context",
+      "name": "Fetch Context",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-1480, 0],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Centralize the run context (§3.4). Builds the condensed §6.3 agent panels\n// (compact fields only — no OHLC arrays, no article bodies cross the LLM\n// boundary, §2) and carries the prompts + deterministic rubric facts from\n// POST /riskmanager/context. inputs_ok is false only when the context endpoint\n// itself failed — a degraded *agent* still runs all three passes (§3.4 'runs\n// three passes, always'); the prompts/clamp steer it toward avoid.\nconst trig = $('When Executed by Another Workflow').first().json;\nconst resp = $('Fetch Context').first().json;\nconst sentiment = trig.sentiment || {};\nconst earnings = trig.earnings || {};\nconst technical = trig.technical || {};\nconst prompts = resp.prompts || {};\nconst facts = resp.facts || {};\n\nconst inputsOk = Boolean(prompts.draft && prompts.critique && prompts.final && facts && facts.agreement_counts);\nconst degradeReason = inputsOk ? null : `riskmanager context unavailable (${resp.summary || (resp.error && resp.error.message) || 'no context'})`;\n\nconst sentimentPanel = {\n  llm_sentiment: sentiment.llm_sentiment ?? null,\n  model_sentiment: sentiment.model_sentiment ?? null,\n  disagreement: sentiment.disagreement ?? null,\n  summary: sentiment.summary || '',\n};\nconst earningsPanel = {\n  is_window: (earnings.is_earnings_window ?? earnings.is_window) ?? false,\n  materiality: earnings.materiality ?? null,\n  summary: earnings.summary || '',\n};\nconst technicalPanel = {\n  signal: technical.signal ?? null,\n  summary: technical.summary || '',\n};\nconst agentStatus = {\n  sentiment: sentiment.status || 'ok',\n  earnings: earnings.status || 'ok',\n  technical: technical.status || 'ok',\n};\n\nreturn [{ json: {\n  ticker: trig.ticker,\n  run_id: trig.run_id,\n  sentiment: sentimentPanel,\n  earnings: earningsPanel,\n  technical: technicalPanel,\n  agent_status: agentStatus,\n  prompts,\n  facts,\n  inputs_ok: inputsOk,\n  degrade_reason: degradeReason,\n} }];"
+      },
+      "id": "code-prepare",
+      "name": "Prepare Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1260, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [
+            { "id": "inputs-ok", "leftValue": "={{ $json.inputs_ok }}", "rightValue": "", "operator": { "type": "boolean", "operation": "true", "singleValue": true } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-inputs-ok",
+      "name": "Inputs OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-1040, 0]
+    },
+    {
+      "parameters": {
+        "model": "anthropic/claude-haiku-4.5",
+        "options": { "temperature": 0 }
+      },
+      "id": "lm-openrouter-haiku",
+      "name": "OpenRouter Haiku",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [-1040, 700],
+      "credentials": {
+        "openRouterApi": { "id": "REPLACE_AFTER_IMPORT", "name": "OpenRouter account" }
+      }
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Substitute the DRAFT template (§3.4 step 1) with the run context. Prompt\n// carries only compact panels + rubric facts — never heavy data (§2).\nconst ctx = $('Prepare Context').first().json;\nlet t = ctx.prompts.draft;\nt = t.split('{{TICKER}}').join(ctx.ticker);\nt = t.split('{{SENTIMENT_JSON}}').join(JSON.stringify(ctx.sentiment));\nt = t.split('{{EARNINGS_JSON}}').join(JSON.stringify(ctx.earnings));\nt = t.split('{{TECHNICAL_JSON}}').join(JSON.stringify(ctx.technical));\nt = t.split('{{RUBRIC_FACTS}}').join(JSON.stringify(ctx.facts));\nreturn [{ json: { prompt: t } }];"
+      },
+      "id": "code-build-draft",
+      "name": "Build Draft Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-820, 0]
+    },
+    {
+      "parameters": { "promptType": "define", "text": "={{ $json.prompt }}" },
+      "id": "chain-draft",
+      "name": "Draft",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [-620, 0],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the raw LLM text for POST /validate. A parse failure is NOT swallowed\n// — it becomes an invalid payload so the validate -> retry -> degraded path\n// handles it (§9.4).\nconst raw = ($json.text ?? '').toString().trim().replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '');\nlet payload;\ntry { payload = JSON.parse(raw); } catch (e) { payload = { _parse_error: String(e) }; }\nif (typeof payload !== 'object' || payload === null || Array.isArray(payload)) { payload = { _not_an_object: true }; }\nreturn [{ json: { agent: 'risk_draft', payload, raw } }];"
+      },
+      "id": "code-parse-draft",
+      "name": "Parse Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-420, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/validate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ agent: 'risk_draft', payload: $json.payload }) }}",
+        "options": {}
+      },
+      "id": "http-validate-draft",
+      "name": "Validate Draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-220, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [ { "id": "draft-valid", "leftValue": "={{ $json.valid }}", "rightValue": "", "operator": { "type": "boolean", "operation": "true", "singleValue": true } } ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-draft-valid",
+      "name": "Draft Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One automatic retry with a stricter instruction (§9.4). Validation errors\n// from POST /validate are quoted back to the model.\nconst base = $('Build Draft Prompt').first().json.prompt;\nconst errors = $json.errors || [];\nconst prompt = base + '\\n\\nYour previous response was rejected by schema validation: ' + JSON.stringify(errors) + '\\nRespond again with ONLY the JSON object described above — no prose, no markdown fences, no extra keys.';\nreturn [{ json: { prompt } }];"
+      },
+      "id": "code-stricter-draft",
+      "name": "Build Stricter Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [0, 220]
+    },
+    {
+      "parameters": { "promptType": "define", "text": "={{ $json.prompt }}" },
+      "id": "chain-draft-retry",
+      "name": "Draft (Retry)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [220, 220],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = ($json.text ?? '').toString().trim().replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '');\nlet payload;\ntry { payload = JSON.parse(raw); } catch (e) { payload = { _parse_error: String(e) }; }\nif (typeof payload !== 'object' || payload === null || Array.isArray(payload)) { payload = { _not_an_object: true }; }\nreturn [{ json: { agent: 'risk_draft', payload, raw } }];"
+      },
+      "id": "code-parse-draft-retry",
+      "name": "Parse Draft (Retry)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, 220]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/validate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ agent: 'risk_draft', payload: $json.payload }) }}",
+        "options": {}
+      },
+      "id": "http-validate-draft-retry",
+      "name": "Validate Draft (Retry)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [620, 220]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [ { "id": "draft-retry-valid", "leftValue": "={{ $json.valid }}", "rightValue": "", "operator": { "type": "boolean", "operation": "true", "singleValue": true } } ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-draft-retry-valid",
+      "name": "Draft Valid (Retry)?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [820, 220]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize the committed draft from whichever parse produced the valid\n// payload (direct or retry), so downstream passes reference one node.\nlet payload;\ntry { const p = $('Parse Draft (Retry)').first().json.payload; if (p && !p._parse_error && !p._not_an_object) payload = p; } catch (e) { /* retry never ran */ }\nif (!payload) payload = $('Parse Draft').first().json.payload;\nreturn [{ json: { draft: payload } }];"
+      },
+      "id": "code-commit-draft",
+      "name": "Commit Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1040, 0]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Substitute the CRITIQUE template (§3.4 step 2): the draft is fed in to be\n// attacked.\nconst ctx = $('Prepare Context').first().json;\nconst draft = $('Commit Draft').first().json.draft;\nlet t = ctx.prompts.critique;\nt = t.split('{{TICKER}}').join(ctx.ticker);\nt = t.split('{{SENTIMENT_JSON}}').join(JSON.stringify(ctx.sentiment));\nt = t.split('{{EARNINGS_JSON}}').join(JSON.stringify(ctx.earnings));\nt = t.split('{{TECHNICAL_JSON}}').join(JSON.stringify(ctx.technical));\nt = t.split('{{DRAFT_JSON}}').join(JSON.stringify(draft));\nreturn [{ json: { prompt: t } }];"
+      },
+      "id": "code-build-critique",
+      "name": "Build Critique Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1260, 0]
+    },
+    {
+      "parameters": { "promptType": "define", "text": "={{ $json.prompt }}" },
+      "id": "chain-critique",
+      "name": "Critique",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [1460, 0],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = ($json.text ?? '').toString().trim().replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '');\nlet payload;\ntry { payload = JSON.parse(raw); } catch (e) { payload = { _parse_error: String(e) }; }\nif (typeof payload !== 'object' || payload === null || Array.isArray(payload)) { payload = { _not_an_object: true }; }\nreturn [{ json: { agent: 'risk_critique', payload, raw } }];"
+      },
+      "id": "code-parse-critique",
+      "name": "Parse Critique",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1660, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/validate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ agent: 'risk_critique', payload: $json.payload }) }}",
+        "options": {}
+      },
+      "id": "http-validate-critique",
+      "name": "Validate Critique",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1860, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [ { "id": "critique-valid", "leftValue": "={{ $json.valid }}", "rightValue": "", "operator": { "type": "boolean", "operation": "true", "singleValue": true } } ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-critique-valid",
+      "name": "Critique Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2080, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Build Critique Prompt').first().json.prompt;\nconst errors = $json.errors || [];\nconst prompt = base + '\\n\\nYour previous response was rejected by schema validation: ' + JSON.stringify(errors) + '\\nRespond again with ONLY the JSON object described above — no prose, no markdown fences, no extra keys.';\nreturn [{ json: { prompt } }];"
+      },
+      "id": "code-stricter-critique",
+      "name": "Build Stricter Critique",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2080, 220]
+    },
+    {
+      "parameters": { "promptType": "define", "text": "={{ $json.prompt }}" },
+      "id": "chain-critique-retry",
+      "name": "Critique (Retry)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [2300, 220],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = ($json.text ?? '').toString().trim().replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '');\nlet payload;\ntry { payload = JSON.parse(raw); } catch (e) { payload = { _parse_error: String(e) }; }\nif (typeof payload !== 'object' || payload === null || Array.isArray(payload)) { payload = { _not_an_object: true }; }\nreturn [{ json: { agent: 'risk_critique', payload, raw } }];"
+      },
+      "id": "code-parse-critique-retry",
+      "name": "Parse Critique (Retry)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2500, 220]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/validate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ agent: 'risk_critique', payload: $json.payload }) }}",
+        "options": {}
+      },
+      "id": "http-validate-critique-retry",
+      "name": "Validate Critique (Retry)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2700, 220]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [ { "id": "critique-retry-valid", "leftValue": "={{ $json.valid }}", "rightValue": "", "operator": { "type": "boolean", "operation": "true", "singleValue": true } } ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-critique-retry-valid",
+      "name": "Critique Valid (Retry)?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2900, 220]
+    },
+    {
+      "parameters": {
+        "jsCode": "let payload;\ntry { const p = $('Parse Critique (Retry)').first().json.payload; if (p && !p._parse_error && !p._not_an_object) payload = p; } catch (e) { /* retry never ran */ }\nif (!payload) payload = $('Parse Critique').first().json.payload;\nreturn [{ json: { critique: payload } }];"
+      },
+      "id": "code-commit-critique",
+      "name": "Commit Critique",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3120, 0]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Substitute the FINAL template (§3.4 step 3): draft + critique + rubric\n// facts (which caps apply) are all fed in.\nconst ctx = $('Prepare Context').first().json;\nconst draft = $('Commit Draft').first().json.draft;\nconst critique = $('Commit Critique').first().json.critique;\nlet t = ctx.prompts.final;\nt = t.split('{{TICKER}}').join(ctx.ticker);\nt = t.split('{{SENTIMENT_JSON}}').join(JSON.stringify(ctx.sentiment));\nt = t.split('{{EARNINGS_JSON}}').join(JSON.stringify(ctx.earnings));\nt = t.split('{{TECHNICAL_JSON}}').join(JSON.stringify(ctx.technical));\nt = t.split('{{DRAFT_JSON}}').join(JSON.stringify(draft));\nt = t.split('{{CRITIQUE_JSON}}').join(JSON.stringify(critique));\nt = t.split('{{RUBRIC_FACTS}}').join(JSON.stringify(ctx.facts));\nreturn [{ json: { prompt: t } }];"
+      },
+      "id": "code-build-final",
+      "name": "Build Final Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3340, 0]
+    },
+    {
+      "parameters": { "promptType": "define", "text": "={{ $json.prompt }}" },
+      "id": "chain-final",
+      "name": "Final",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [3540, 0],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = ($json.text ?? '').toString().trim().replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '');\nlet payload;\ntry { payload = JSON.parse(raw); } catch (e) { payload = { _parse_error: String(e) }; }\nif (typeof payload !== 'object' || payload === null || Array.isArray(payload)) { payload = { _not_an_object: true }; }\nreturn [{ json: { agent: 'risk_final', payload, raw } }];"
+      },
+      "id": "code-parse-final",
+      "name": "Parse Final",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3740, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/validate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ agent: 'risk_final', payload: $json.payload }) }}",
+        "options": {}
+      },
+      "id": "http-validate-final",
+      "name": "Validate Final",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3940, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [ { "id": "final-valid", "leftValue": "={{ $json.valid }}", "rightValue": "", "operator": { "type": "boolean", "operation": "true", "singleValue": true } } ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-final-valid",
+      "name": "Final Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [4160, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Build Final Prompt').first().json.prompt;\nconst errors = $json.errors || [];\nconst prompt = base + '\\n\\nYour previous response was rejected by schema validation: ' + JSON.stringify(errors) + '\\nRespond again with ONLY the JSON object described above — no prose, no markdown fences, no extra keys.';\nreturn [{ json: { prompt } }];"
+      },
+      "id": "code-stricter-final",
+      "name": "Build Stricter Final",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4160, 220]
+    },
+    {
+      "parameters": { "promptType": "define", "text": "={{ $json.prompt }}" },
+      "id": "chain-final-retry",
+      "name": "Final (Retry)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [4380, 220],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = ($json.text ?? '').toString().trim().replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/, '');\nlet payload;\ntry { payload = JSON.parse(raw); } catch (e) { payload = { _parse_error: String(e) }; }\nif (typeof payload !== 'object' || payload === null || Array.isArray(payload)) { payload = { _not_an_object: true }; }\nreturn [{ json: { agent: 'risk_final', payload, raw } }];"
+      },
+      "id": "code-parse-final-retry",
+      "name": "Parse Final (Retry)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4580, 220]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/validate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ agent: 'risk_final', payload: $json.payload }) }}",
+        "options": {}
+      },
+      "id": "http-validate-final-retry",
+      "name": "Validate Final (Retry)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4780, 220]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [ { "id": "final-retry-valid", "leftValue": "={{ $json.valid }}", "rightValue": "", "operator": { "type": "boolean", "operation": "true", "singleValue": true } } ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-final-retry-valid",
+      "name": "Final Valid (Retry)?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [4980, 220]
+    },
+    {
+      "parameters": {
+        "jsCode": "let payload;\ntry { const p = $('Parse Final (Retry)').first().json.payload; if (p && !p._parse_error && !p._not_an_object) payload = p; } catch (e) { /* retry never ran */ }\nif (!payload) payload = $('Parse Final').first().json.payload;\nreturn [{ json: { final: payload } }];"
+      },
+      "id": "code-commit-final",
+      "name": "Commit Final",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5200, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Deterministic rubric clamp (§3.4) — the 'mechanism' half of the rubric.\n// The LLM authored the final call; here it is enforced against the rubric so a\n// violation (e.g. high conviction on 2-of-3 agreement) cannot reach the report.\n// Every clamp is recorded and appended to the rationale — no silent rewrite.\nconst ctx = $('Prepare Context').first().json;\nconst facts = ctx.facts;\nconst draft = $('Commit Draft').first().json.draft;\nconst critique = $('Commit Critique').first().json.critique;\nconst final = { ...$('Commit Final').first().json.final };\nconst notes = [];\nconst order = { low: 0, medium: 1, high: 2 };\n\nfunction capTo(level, why) {\n  if (order[final.conviction] > order[level]) {\n    notes.push(`conviction capped ${final.conviction} -> ${level}${why ? ` (${why})` : ''}`);\n    final.conviction = level;\n  }\n}\n\n// 1. Two or more degraded agents force avoid (§3.4) — insufficient evidence.\nif (facts.caps && facts.caps.force_avoid) {\n  if (final.recommendation !== 'avoid') {\n    notes.push(`recommendation set to avoid (${facts.caps.degraded_count} degraded agents)`);\n    final.recommendation = 'avoid';\n  }\n  final.conviction = 'low';\n}\n\n// 2. Agreement-count ceiling, resolved with the draft's LLM earnings_direction.\nconst earnDir = (draft && draft.earnings_direction) || 'neutral';\nconst counts = (facts.agreement_counts && facts.agreement_counts.by_earnings_direction[earnDir]) || { bullish: 0, bearish: 0 };\nconst side = final.recommendation === 'long' ? 'bullish' : (final.recommendation === 'short' ? 'bearish' : null);\nif (side && !(facts.caps && facts.caps.force_avoid)) {\n  const agree = counts[side];\n  if (agree <= 1) {\n    notes.push(`downgraded to hold (${agree} of 3 agents agree on ${side})`);\n    final.recommendation = 'hold';\n    final.conviction = 'low';\n  } else if (agree === 2) {\n    capTo('medium', '2 of 3 agreement');\n  }\n}\n\n// 3. `short` requires at least one strong bearish signal (§3.4). The earnings\n// part is direction-dependent, so it is resolved here with the draft's\n// LLM-classified earnings_direction (facts.has_strong_bearish covers only the\n// sentiment/technical part, known at context time).\nconst strongBearish = Boolean(facts.has_strong_bearish) || Boolean(facts.strong_signals && facts.strong_signals.earnings && earnDir === 'bearish');\nif (final.recommendation === 'short' && !strongBearish) {\n  notes.push('downgraded short -> hold (no strong bearish signal)');\n  final.recommendation = 'hold';\n  final.conviction = 'low';\n}\n\n// 3b. `avoid` is reserved for >=2 degraded agents (§3.4) — never a directional\n// call. An avoid without force_avoid is a rubric violation; clamp it to hold.\nif (final.recommendation === 'avoid' && !(facts.caps && facts.caps.force_avoid)) {\n  notes.push('downgraded avoid -> hold (avoid reserved for >=2 degraded agents)');\n  final.recommendation = 'hold';\n  final.conviction = 'low';\n}\n\n// 4. Conviction caps: earnings-event, dual-sentiment, single degraded agent.\nif (facts.caps && facts.caps.any_cap_medium && !facts.caps.force_avoid && (final.recommendation === 'long' || final.recommendation === 'short')) {\n  const reasons = [];\n  if (facts.caps.earnings_event) reasons.push('earnings event risk');\n  if (facts.caps.dual_sentiment) reasons.push('dual-sentiment disagreement');\n  if (facts.caps.degraded_count >= 1) reasons.push(`${facts.caps.degraded_count} degraded agent(s)`);\n  capTo('medium', reasons.join(', '));\n}\n\nif (notes.length) {\n  final.rationale = `${final.rationale}\\n\\n[Rubric clamp: ${notes.join('; ')}.]`;\n}\n\nreturn [{ json: {\n  ticker: ctx.ticker,\n  draft,\n  critique,\n  final,\n  sentiment: ctx.sentiment,\n  earnings: ctx.earnings,\n  technical: ctx.technical,\n  status: 'ok',\n} }];"
+      },
+      "id": "code-finalize",
+      "name": "Apply Rubric Clamp",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5420, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Degraded result (§9.4): no fabrication. Reached when the context endpoint\n// failed (Inputs OK? = false) or an LLM pass failed schema validation twice.\n// Whatever passes completed are kept; missing passes are null; the final call\n// is a safe hold.\nconst ctx = $('Prepare Context').first().json;\nfunction tryGet(node, key) { try { return $(node).first().json[key]; } catch (e) { return null; } }\nconst draft = tryGet('Commit Draft', 'draft');\nconst critique = tryGet('Commit Critique', 'critique');\n\nlet reason;\nif (ctx.inputs_ok === false) {\n  reason = ctx.degrade_reason || 'risk manager context unavailable';\n} else {\n  let errs = [];\n  for (const n of ['Validate Final (Retry)', 'Validate Critique (Retry)', 'Validate Draft (Retry)']) {\n    try { const e = $(n).first().json.errors; if (e && e.length) { errs = e; break; } } catch (_) { /* pass never reached */ }\n  }\n  reason = 'an LLM pass failed schema validation after one stricter retry' + (errs.length ? ` (${errs.join('; ')})` : '');\n}\n\nreturn [{ json: {\n  ticker: ctx.ticker,\n  draft: draft || null,\n  critique: critique || null,\n  final: { recommendation: 'hold', conviction: 'low', rationale: `degraded: ${reason}` },\n  sentiment: ctx.sentiment,\n  earnings: ctx.earnings,\n  technical: ctx.technical,\n  status: 'degraded',\n} }];"
+      },
+      "id": "code-degraded",
+      "name": "Degraded Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5420, 460]
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": { "main": [[{ "node": "Fetch Context", "type": "main", "index": 0 }]] },
+    "Fetch Context": { "main": [[{ "node": "Prepare Context", "type": "main", "index": 0 }]] },
+    "Prepare Context": { "main": [[{ "node": "Inputs OK?", "type": "main", "index": 0 }]] },
+    "Inputs OK?": {
+      "main": [
+        [{ "node": "Build Draft Prompt", "type": "main", "index": 0 }],
+        [{ "node": "Degraded Output", "type": "main", "index": 0 }]
+      ]
+    },
+    "OpenRouter Haiku": {
+      "ai_languageModel": [[
+        { "node": "Draft", "type": "ai_languageModel", "index": 0 },
+        { "node": "Draft (Retry)", "type": "ai_languageModel", "index": 0 },
+        { "node": "Critique", "type": "ai_languageModel", "index": 0 },
+        { "node": "Critique (Retry)", "type": "ai_languageModel", "index": 0 },
+        { "node": "Final", "type": "ai_languageModel", "index": 0 },
+        { "node": "Final (Retry)", "type": "ai_languageModel", "index": 0 }
+      ]]
+    },
+
+    "Build Draft Prompt": { "main": [[{ "node": "Draft", "type": "main", "index": 0 }]] },
+    "Draft": { "main": [[{ "node": "Parse Draft", "type": "main", "index": 0 }]] },
+    "Parse Draft": { "main": [[{ "node": "Validate Draft", "type": "main", "index": 0 }]] },
+    "Validate Draft": { "main": [[{ "node": "Draft Valid?", "type": "main", "index": 0 }]] },
+    "Draft Valid?": {
+      "main": [
+        [{ "node": "Commit Draft", "type": "main", "index": 0 }],
+        [{ "node": "Build Stricter Draft", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Stricter Draft": { "main": [[{ "node": "Draft (Retry)", "type": "main", "index": 0 }]] },
+    "Draft (Retry)": { "main": [[{ "node": "Parse Draft (Retry)", "type": "main", "index": 0 }]] },
+    "Parse Draft (Retry)": { "main": [[{ "node": "Validate Draft (Retry)", "type": "main", "index": 0 }]] },
+    "Validate Draft (Retry)": { "main": [[{ "node": "Draft Valid (Retry)?", "type": "main", "index": 0 }]] },
+    "Draft Valid (Retry)?": {
+      "main": [
+        [{ "node": "Commit Draft", "type": "main", "index": 0 }],
+        [{ "node": "Degraded Output", "type": "main", "index": 0 }]
+      ]
+    },
+    "Commit Draft": { "main": [[{ "node": "Build Critique Prompt", "type": "main", "index": 0 }]] },
+
+    "Build Critique Prompt": { "main": [[{ "node": "Critique", "type": "main", "index": 0 }]] },
+    "Critique": { "main": [[{ "node": "Parse Critique", "type": "main", "index": 0 }]] },
+    "Parse Critique": { "main": [[{ "node": "Validate Critique", "type": "main", "index": 0 }]] },
+    "Validate Critique": { "main": [[{ "node": "Critique Valid?", "type": "main", "index": 0 }]] },
+    "Critique Valid?": {
+      "main": [
+        [{ "node": "Commit Critique", "type": "main", "index": 0 }],
+        [{ "node": "Build Stricter Critique", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Stricter Critique": { "main": [[{ "node": "Critique (Retry)", "type": "main", "index": 0 }]] },
+    "Critique (Retry)": { "main": [[{ "node": "Parse Critique (Retry)", "type": "main", "index": 0 }]] },
+    "Parse Critique (Retry)": { "main": [[{ "node": "Validate Critique (Retry)", "type": "main", "index": 0 }]] },
+    "Validate Critique (Retry)": { "main": [[{ "node": "Critique Valid (Retry)?", "type": "main", "index": 0 }]] },
+    "Critique Valid (Retry)?": {
+      "main": [
+        [{ "node": "Commit Critique", "type": "main", "index": 0 }],
+        [{ "node": "Degraded Output", "type": "main", "index": 0 }]
+      ]
+    },
+    "Commit Critique": { "main": [[{ "node": "Build Final Prompt", "type": "main", "index": 0 }]] },
+
+    "Build Final Prompt": { "main": [[{ "node": "Final", "type": "main", "index": 0 }]] },
+    "Final": { "main": [[{ "node": "Parse Final", "type": "main", "index": 0 }]] },
+    "Parse Final": { "main": [[{ "node": "Validate Final", "type": "main", "index": 0 }]] },
+    "Validate Final": { "main": [[{ "node": "Final Valid?", "type": "main", "index": 0 }]] },
+    "Final Valid?": {
+      "main": [
+        [{ "node": "Commit Final", "type": "main", "index": 0 }],
+        [{ "node": "Build Stricter Final", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Stricter Final": { "main": [[{ "node": "Final (Retry)", "type": "main", "index": 0 }]] },
+    "Final (Retry)": { "main": [[{ "node": "Parse Final (Retry)", "type": "main", "index": 0 }]] },
+    "Parse Final (Retry)": { "main": [[{ "node": "Validate Final (Retry)", "type": "main", "index": 0 }]] },
+    "Validate Final (Retry)": { "main": [[{ "node": "Final Valid (Retry)?", "type": "main", "index": 0 }]] },
+    "Final Valid (Retry)?": {
+      "main": [
+        [{ "node": "Commit Final", "type": "main", "index": 0 }],
+        [{ "node": "Degraded Output", "type": "main", "index": 0 }]
+      ]
+    },
+    "Commit Final": { "main": [[{ "node": "Apply Rubric Clamp", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}

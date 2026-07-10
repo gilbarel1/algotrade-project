@@ -128,7 +128,7 @@ Each agent is an n8n sub-workflow. Sentiment, Earnings, and Technical run in par
 
 The Risk Manager is the most consequential reasoning step in the system, so it runs as **three sequential LLM passes** with explicit role separation rather than a single emission:
 
-1. **Draft pass.** Given the three agents' outputs, produce an initial `{recommendation, conviction, rationale}` per the agreement rubric.
+1. **Draft pass.** Given the three agents' outputs, produce an initial `{recommendation, conviction, rationale, earnings_direction}` per the agreement rubric. Sentiment and technical directions are computed deterministically server-side (`/riskmanager/context`); `earnings_direction ∈ {bullish, bearish, neutral}` is the one directional mapping §3.4 leaves to the model ("LLM-classified"), so it is emitted here to keep it auditable and to let the sub-workflow recompute the agreement count mechanically for the final clamp.
 2. **Devil's-advocate critique pass.** Given the draft, deliberately argue the **opposite** case: cite specific signals the draft underweighted, name plausible failure scenarios for the recommendation, and challenge the conviction. Output is structured: `{counter_recommendation, key_objections[], conviction_challenge}`.
 3. **Final-decision pass.** Given the draft and the critique, produce the final `{recommendation, conviction, rationale}`. The rationale must explicitly state how each critique objection was either incorporated or dismissed.
 
@@ -282,6 +282,7 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
 | `POST /earnings/store` | Upsert the classified disclosure + self-consistency extraction into the `earnings` table (§4.2); n8n cannot write DuckDB directly |
 | `POST /report`     | Render PDF from Risk Manager output + run id                                 |
 | `POST /validate`   | Validate an agent's raw LLM JSON against its Pydantic schema in `schemas/` (the §9.4 LLM-boundary guardrail; n8n's embedded Python cannot import the repo's schemas, so validation is served over HTTP) |
+| `POST /riskmanager/context` | Serve the Risk Manager sub-workflow its three pass prompts (from `prompts/risk_manager_*.md`), the rubric thresholds (from `config/rubric.yaml`), and the **deterministic** §3.4 rubric facts (directional mapping, strong-signal flags, agreement counts, applicable conviction caps) computed from the agent outputs. Keeps prompts and rubric server-side (never hardcoded in the workflow) and makes the rubric a mechanism, not just an instruction — mirrors the server-side few-shot loading in `/news/fetch` and `/earnings/fetch`. Read-only; degrades (never 500s) on partial agent input |
 
 ```jsonc
 // POST /ohlc
@@ -357,6 +358,23 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
 { "agent":"technical", "payload":{"signal":"bullish_momentum","summary":"Momentum building."} }
 { "agent":"technical", "valid":true, "errors":[] }
 // invalid example: {"valid":false, "errors":["signal: Input should be 'bullish_momentum', … or 'neutral'"]}
+// agents: technical, sentiment, earnings, earnings_extraction, risk_draft, risk_critique, risk_final
+
+// POST /riskmanager/context
+{ "ticker":"TEVA.TA", "sentiment":{ /* §3.1 */ }, "earnings":{ /* §3.2 */ }, "technical":{ /* §3.3 */ } }
+{ "ticker":"TEVA.TA",
+  "prompts":{ "draft":"…", "critique":"…", "final":"…" },          // prompts/risk_manager_*.md
+  "rubric":{ /* config/rubric.yaml */ },
+  "facts":{ "sentiment_direction":"bullish", "technical_direction":"bearish",
+            "strong_signals":{"sentiment":true,"technical":false,"earnings":false,"any":true},
+            "has_strong_bearish":false, "short_requires_strong_bearish":true,
+            "agreement_counts":{"fixed_bullish":1,"fixed_bearish":1,
+              "by_earnings_direction":{"bullish":{"bullish":2,"bearish":1},
+                "bearish":{"bullish":1,"bearish":2},"neutral":{"bullish":1,"bearish":1}}},
+            "caps":{"earnings_event":false,"dual_sentiment":false,"degraded_agents":[],
+              "degraded_count":0,"force_avoid":false,"any_cap_medium":false} },
+  "summary":"context ready for TEVA.TA." }
+// Read-only; partial/degraded agent input degrades the summary ("degraded: …"), never 500s.
 ```
 
 PDF rendering uses **WeasyPrint** over a **Jinja2** template (`templates/report.html.j2`).
@@ -385,7 +403,7 @@ Top-level flow:
 | Sentiment    | `{ ticker, window_minutes, run_id }`                 | `/news/fetch`, `/sentiment`, `/news/store` (NewsAPI + RSS reached server-side) | §3.1  |
 | Earnings     | `{ ticker, window_days, run_id }`                    | `/earnings/fetch`, `/validate`, `/earnings/store` (Maya EN/HE reached server-side via headless browser) | §3.2  |
 | Technical    | `{ ticker, lookback_days, run_id }`                  | `/ohlc`, `/indicators`  | §3.3  |
-| Risk Manager | `{ ticker, sentiment, earnings, technical, run_id }` | (LLM only — three passes)  | §6.3  |
+| Risk Manager | `{ ticker, sentiment, earnings, technical, run_id }` | `/riskmanager/context` (prompts + rubric + deterministic facts), `/validate` (×3 passes); three LLM passes otherwise | §6.3  |
 
 ### 6.3 Per-ticker Risk Manager output (consumed by `/report`)
 
@@ -506,7 +524,7 @@ n8n-investment-team/
 │   └── README_credentials.md
 ├── quant_service/
 │   ├── app.py
-│   ├── routers/ {ohlc,indicators,sentiment,news,earnings,report,validate}.py  # news = /news/fetch + /news/store; earnings = /earnings/fetch + /earnings/store
+│   ├── routers/ {ohlc,indicators,sentiment,news,earnings,report,validate,riskmanager}.py  # news = /news/fetch + /news/store; earnings = /earnings/fetch + /earnings/store; riskmanager = /riskmanager/context (§3.4 prompts + rubric + deterministic facts)
 │   ├── data/ {yahoo.py, newsapi.py, maya.py, rss.py, news_store.py, earnings_store.py, textclean.py, tls.py, cache.py, ingest.py}  # ingest = OHLC pull/clean CLI (python -m data.ingest); news_store/earnings_store = table upserts; textclean = shared §4.3 text cleaning + term matching; maya = Playwright scraper; tls = OS-trust SSL context for httpx
 │   ├── indicators/ {calc.py}  # pandas-ta computation behind /indicators (§3.3, §5)
 │   ├── nlp/  {finbert.py, hebert.py, language_detect.py}

@@ -9,7 +9,16 @@ Run: uvicorn app:app --port 8000
 
 from fastapi import FastAPI
 
-from routers import ohlc, indicators, sentiment, news, earnings, report, validate
+from routers import (
+    ohlc,
+    indicators,
+    sentiment,
+    news,
+    earnings,
+    report,
+    validate,
+    riskmanager,
+)
 
 app = FastAPI(
     title="TA-35 Quant Service",
@@ -24,6 +33,7 @@ app.include_router(news.router)
 app.include_router(earnings.router)
 app.include_router(report.router)
 app.include_router(validate.router)
+app.include_router(riskmanager.router)
 
 
 @app.get("/health")

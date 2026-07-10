@@ -18,17 +18,22 @@ from pydantic import BaseModel, ValidationError
 from schemas.technical import TechnicalNarration
 from schemas.sentiment import SentimentNarration
 from schemas.earnings import EarningsClassification, EarningsExtractionSample
+from schemas.risk_manager import RiskDraft, RiskCritique, RiskFinal
 
 router = APIRouter()
 
 # agent name -> Pydantic model guarding that agent's LLM boundary. The
 # Earnings Agent has two boundaries (§3.2): the classify/translate pass and
-# each self-consistency extraction sample.
+# each self-consistency extraction sample. The Risk Manager has three (§3.4):
+# the draft, devil's-advocate critique, and final passes.
 SCHEMAS = {
     "technical": TechnicalNarration,
     "sentiment": SentimentNarration,
     "earnings": EarningsClassification,
     "earnings_extraction": EarningsExtractionSample,
+    "risk_draft": RiskDraft,
+    "risk_critique": RiskCritique,
+    "risk_final": RiskFinal,
 }
 
 

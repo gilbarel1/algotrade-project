@@ -41,7 +41,60 @@ CASES = {
         "agent": "technical",
         "payload": {"signal": "bullish_momentum", "summary": "Momentum building."},
     },
+    # §3.4 Risk Manager context: a contrived trio where sentiment is strongly
+    # bullish, technical bearish, earnings neutral/low — checked for the §3.4
+    # facts shape below (see check_riskmanager_context).
+    "/riskmanager/context": {
+        "ticker": "TEVA.TA",
+        "sentiment": {
+            "llm_sentiment": 0.5,
+            "model_sentiment": 0.45,
+            "disagreement": 0.05,
+            "summary": "Bullish tone.",
+            "status": "ok",
+        },
+        "earnings": {
+            "is_earnings_window": False,
+            "materiality": "low",
+            "summary": "No recent disclosures.",
+            "status": "ok",
+        },
+        "technical": {
+            "signal": "bearish_momentum",
+            "summary": "Momentum fading.",
+            "status": "ok",
+        },
+    },
 }
+
+# Payloads that MUST validate ({"valid": true}) — the positive LLM-boundary cases.
+VALIDATE_MUST_PASS = [
+    {
+        "agent": "risk_draft",
+        "payload": {
+            "recommendation": "long",
+            "conviction": "medium",
+            "rationale": "Two of three constructive.",
+            "earnings_direction": "neutral",
+        },
+    },
+    {
+        "agent": "risk_critique",
+        "payload": {
+            "counter_recommendation": "hold",
+            "key_objections": ["earnings window opens in 4 days"],
+            "conviction_challenge": "high -> medium",
+        },
+    },
+    {
+        "agent": "risk_final",
+        "payload": {
+            "recommendation": "long",
+            "conviction": "medium",
+            "rationale": "Event risk cap applied; critique objection incorporated.",
+        },
+    },
+]
 
 # Payloads that MUST come back {"valid": false} — the LLM-boundary guardrail (§9.4).
 VALIDATE_MUST_FAIL = [
@@ -49,6 +102,11 @@ VALIDATE_MUST_FAIL = [
     {"agent": "technical", "payload": {"signal": "neutral"}},
     {"agent": "technical", "payload": {"signal": "neutral", "summary": "x", "extra": 1}},
     {"agent": "nonexistent", "payload": {}},
+    # Risk Manager boundaries (§3.4): bad enum, missing required field, extra key.
+    {"agent": "risk_draft", "payload": {"recommendation": "moon", "conviction": "medium", "rationale": "x", "earnings_direction": "neutral"}},
+    {"agent": "risk_draft", "payload": {"recommendation": "long", "conviction": "medium", "rationale": "x"}},
+    {"agent": "risk_critique", "payload": {"counter_recommendation": "hold", "key_objections": [], "conviction_challenge": "x"}},
+    {"agent": "risk_final", "payload": {"recommendation": "long", "conviction": "medium", "rationale": "x", "extra": 1}},
 ]
 
 # Minimal shape checks against the §5 contracts.
@@ -58,6 +116,7 @@ REQUIRED_KEYS = {
     "/sentiment": ["scores", "summary"],
     "/report": ["run_id", "pdf_path"],
     "/validate": ["agent", "valid", "errors"],
+    "/riskmanager/context": ["ticker", "prompts", "rubric", "facts", "summary"],
 }
 
 
@@ -87,6 +146,46 @@ def main():
             print(f"OK   {path} -> {json.dumps(body, ensure_ascii=False)}")
         else:
             print(f"FAIL {path}: status={status} missing_keys={missing} body={body}")
+            failures += 1
+            continue
+
+        # §3.4 deterministic facts: the contrived trio (sentiment bullish 0.5/0.45,
+        # technical bearish, earnings neutral/low, all ok) must map directions and
+        # counts exactly, with no conviction caps active.
+        if path == "/riskmanager/context":
+            facts = body.get("facts", {})
+            checks = {
+                "sentiment_direction": facts.get("sentiment_direction") == "bullish",
+                "technical_direction": facts.get("technical_direction") == "bearish",
+                "no_caps": facts.get("caps", {}).get("any_cap_medium") is False,
+                "not_force_avoid": facts.get("caps", {}).get("force_avoid") is False,
+                "count_long_neutral": (
+                    facts.get("agreement_counts", {})
+                    .get("by_earnings_direction", {})
+                    .get("neutral", {})
+                    .get("bullish")
+                    == 1
+                ),
+            }
+            bad = [k for k, ok in checks.items() if not ok]
+            if bad:
+                print(f"FAIL /riskmanager/context facts wrong: {bad} facts={facts}")
+                failures += 1
+            else:
+                print("OK   /riskmanager/context facts (directions, counts, no caps)")
+
+    # Positive cases: well-formed LLM payloads must validate.
+    for payload in VALIDATE_MUST_PASS:
+        try:
+            status, body = post("/validate", payload)
+        except Exception as exc:  # noqa: BLE001 - surface any transport error
+            print(f"FAIL /validate (positive) {payload['agent']}: {exc}")
+            failures += 1
+            continue
+        if status == 200 and body.get("valid") is True and not body.get("errors"):
+            print(f"OK   /validate accepts {payload['agent']}")
+        else:
+            print(f"FAIL /validate rejected valid {payload['agent']}: {body}")
             failures += 1
 
     # Negative cases: malformed LLM payloads must be rejected, never accepted.

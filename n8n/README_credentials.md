@@ -110,6 +110,60 @@ Three terminal states: `ok` with a classified disclosure; `ok` with
 window (never padded); and `degraded` (with a reason) when the scrape, an LLM
 boundary, or the `earnings` write fails. Cost logging is deferred to Step 8.
 
+### Risk Manager (`agents/risk_manager.json`, Step 7)
+
+Runs **once per ticker** after the three analysis agents (not fanned out) and
+consumes their outputs. Input (§6.2) — the three agent payloads as objects:
+
+```json
+{
+  "ticker": "TEVA.TA",
+  "run_id": "r_test",
+  "sentiment":  { "llm_sentiment": 0.5, "model_sentiment": 0.45, "disagreement": 0.05, "summary": "Bullish tone.", "status": "ok" },
+  "earnings":   { "is_earnings_window": false, "materiality": "low", "summary": "No recent disclosures.", "status": "ok" },
+  "technical":  { "signal": "bearish_momentum", "summary": "Momentum fading.", "status": "ok" }
+}
+```
+
+Flow (§3.4 three-stage critique loop): `POST /riskmanager/context` (loads the
+three pass prompts from `prompts/risk_manager_*.md`, the rubric from
+`config/rubric.yaml`, and the **deterministic** §3.4 facts — directions, strong
+signals, agreement counts, applicable caps) → three sequential LLM passes, all
+Claude Haiku 4.5 (temperature 0), each a validated boundary:
+
+- **Draft** (`POST /validate` agent `"risk_draft"`) → the initial
+  `{recommendation, conviction, rationale, earnings_direction}`.
+- **Devil's-advocate critique** (agent `"risk_critique"`) → argues the opposite
+  case: `{counter_recommendation, key_objections[], conviction_challenge}`.
+- **Final** (agent `"risk_final"`) → the committed `{recommendation, conviction,
+  rationale}`; the rationale addresses each objection and references any cap.
+
+Each pass gets one stricter retry on a schema failure, then falls through to the
+degraded output. The **three passes always run** (never collapsed to one call);
+after the final pass, the **Apply Rubric Clamp** Code node deterministically
+enforces the §3.4 rubric — the agreement-count ceiling (resolved with the draft's
+`earnings_direction`), the `short`-needs-strong-bearish rule, the ≥2-degraded
+`avoid` rule, and the earnings-event / dual-sentiment / degraded-agent conviction
+caps — appending an explicit clamp note to the rationale rather than rewriting it
+silently. Only compact panels and scores cross the LLM boundary — no OHLC arrays
+or article bodies (§2 guardrail).
+
+Output (§6.3 + §3.4 status): `{ ticker, draft, critique, final, sentiment{…},
+earnings{…}, technical{…}, status }`.
+
+Two terminal states: `ok` with all three passes populated and the clamped final;
+and `degraded` (final = safe `hold`, completed passes kept, missing passes null,
+`status: "degraded"`) when the context fetch fails or a pass fails validation
+twice. Cost logging and the `recommendations`-table write are deferred to Step 8
+(orchestrator).
+
+**Local verification** (Windows): pin a contrived input where one agent
+disagrees with the other two (e.g. the trio above — sentiment bullish, technical
+bearish, earnings neutral) and run via *Execute workflow*. The critique should
+name the disagreeing signal and the final rationale should reference it, with
+conviction respecting the 2-of-3 → medium ceiling. Set two agents to
+`"status": "degraded"` to confirm the final is forced to `avoid`.
+
 **Local verification notes** (Windows): use `http://127.0.0.1:8000` (not
 `localhost`, which n8n resolves to IPv6 first and refuses); if `{{ $env.… }}` is
 blocked in your n8n build, switch the HTTP node URL field to Fixed and paste the

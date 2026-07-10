@@ -32,7 +32,8 @@ Two layers joined by one HTTP boundary (§2 of the design):
                                   ▼
                   ┌─────────────────────────────────────────────┐
                   │  quant_service  (Python + FastAPI)           │
-                  │  /ohlc /indicators /sentiment /report /validate │
+                  │  /ohlc /indicators /sentiment /report          │
+                  │  /validate /riskmanager/context                │
                   │  pandas-ta · FinBERT/HeBERT · WeasyPrint     │
                   └───────────────┬─────────────────────────────┘
                                   ▼
@@ -71,7 +72,7 @@ NewsAPI key for English coverage (it degrades gracefully to RSS-only without one
 algotrade-project/
 ├── quant_service/              # FastAPI service — all ML, indicators, PDF (§5)
 │   ├── app.py                  #   app entrypoint: uvicorn app:app --port 8000
-│   ├── routers/                #   one module per endpoint: ohlc, indicators, sentiment, news, earnings, report, validate
+│   ├── routers/                #   one module per endpoint: ohlc, indicators, sentiment, news, earnings, report, validate, riskmanager
 │   ├── data/                   #   yahoo, newsapi, rss, news_store, maya, earnings_store, textclean, cache, ingest, tls
 │   ├── indicators/             #   calc  (pandas-ta computation behind /indicators)
 │   ├── nlp/                    #   finbert, hebert, language_detect   (sentiment models)
@@ -110,7 +111,23 @@ below for which step owns what.
 
 ## Setup & quick start
 
-> Current state (through **Step 6**): the **Earnings Agent sub-workflow**
+> Current state (through **Step 7**): the **Risk Manager sub-workflow**
+> (`n8n/agents/risk_manager.json`) is live — it runs **once per ticker** after the three
+> analysis agents and consumes their outputs through a **three-stage critique loop** (§3.4):
+> **draft → devil's-advocate critique → final**, all Claude Haiku 4.5 at temperature 0, each
+> pass a Pydantic-validated boundary (`POST /validate`, agents `"risk_draft"` / `"risk_critique"`
+> / `"risk_final"`, one stricter retry then `degraded`). Prompts live in
+> `prompts/risk_manager_{draft,critique,final}.md` and the rubric in `config/rubric.yaml`; both,
+> plus the **deterministic** §3.4 rubric facts (directional mapping, strong-signal flags,
+> agreement counts, applicable conviction caps), are served by the new **`POST
+> /riskmanager/context`** endpoint — so the rubric is a *mechanism*, not just prompt text. After
+> the final pass an **Apply Rubric Clamp** node re-enforces the agreement-count ceiling and the
+> conviction caps deterministically, appending an audit note to the rationale rather than
+> rewriting it. Output is the §6.3 shape with all three passes visible. Cost logging and the
+> `recommendations`-table write are deferred to Step 8. See `n8n/README_credentials.md → Risk
+> Manager`.
+>
+> Earlier state (through **Step 6**): the **Earnings Agent sub-workflow**
 > (`n8n/agents/earnings.json`) is live — it calls **`POST /earnings/fetch`** (the Maya
 > disclosure page is a JS SPA behind bot protection, so it's rendered **server-side in
 > headless Playwright Chromium**, EN page primary / HE fallback, cleaned and term-matched per
@@ -366,6 +383,23 @@ The first returns disclosure `items` (or a `degraded:` summary if Maya blocks th
 never a 500); the second returns `valid:false` (`kind: Input should be 'earnings', …`); the
 third returns `valid:true`.
 
+**And for the Risk Manager** (Step 7 — deterministic, no LLM needed to inspect the rubric
+facts):
+
+```bash
+# rubric facts for a contrived trio (sentiment bullish, technical bearish, earnings neutral):
+curl -s -X POST localhost:8000/riskmanager/context -H "content-type: application/json" -d '{"ticker":"TEVA.TA","sentiment":{"llm_sentiment":0.5,"model_sentiment":0.45,"disagreement":0.05,"status":"ok"},"earnings":{"is_earnings_window":false,"materiality":"low","status":"ok"},"technical":{"signal":"bearish_momentum","status":"ok"}}'
+# validate the three Risk Manager LLM boundaries:
+curl -s -X POST localhost:8000/validate -H "content-type: application/json" -d '{"agent":"risk_draft","payload":{"recommendation":"long","conviction":"medium","rationale":"x","earnings_direction":"neutral"}}'
+curl -s -X POST localhost:8000/validate -H "content-type: application/json" -d '{"agent":"risk_critique","payload":{"counter_recommendation":"hold","key_objections":[],"conviction_challenge":"x"}}'
+```
+
+The first returns `facts` with `sentiment_direction:"bullish"`, `technical_direction:"bearish"`,
+per-earnings-direction `agreement_counts`, and no active caps; the two `agent:"risk_*"`
+validations return `valid:true` and `valid:false` (`key_objections: List should have at least
+1 item`) respectively. The three pass prompts and the full rubric come back in the same
+response, so the n8n workflow never hardcodes either.
+
 A successful Earnings run's **Finalize** node returns the §3.2 shape and writes the
 classified disclosure into the `earnings` table:
 
@@ -421,7 +455,7 @@ The system is built and reviewed **one step at a time** (full detail in `CLAUDE.
 | 4 | `/sentiment` real (FinBERT + HeBERT) | ✅ done |
 | 5 | Sentiment Agent sub-workflow (dual scoring, few-shot, `news` table) | ✅ done |
 | 6 | Earnings Agent (Maya scraping + self-consistency number extraction) | ✅ done |
-| 7 | Risk Manager three-stage critique loop | ⬜ |
+| 7 | Risk Manager three-stage critique loop (n8n + `/riskmanager/context`) | ✅ done |
 | 8 | Orchestrator fan-out + cost logging | ⬜ |
 | 9 | `/report` real (WeasyPrint + Jinja2) | ⬜ |
 | 10 | Schedule trigger gated by TASE hours | ⬜ |
