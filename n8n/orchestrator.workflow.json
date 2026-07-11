@@ -1,1 +1,413 @@
-{}
+{
+  "name": "Orchestrator (§6.1)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-manual",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 384]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/runs/start",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ mode: 'manual' }) }}",
+        "options": {}
+      },
+      "id": "http-runs-start",
+      "name": "Start Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [224, 384]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One item per ticker. The watchlist and the window parameters come from\n// /runs/start (config/universe.yaml, §4.4) — never hardcoded in the workflow.\nconst run = $json;\nconst watchlist = run.watchlist || [];\nif (!watchlist.length) {\n  throw new Error('/runs/start returned an empty watchlist - check config/universe.yaml (4.4)');\n}\nreturn watchlist.map((ticker) => ({\n  json: {\n    run_id: run.run_id,\n    ticker,\n    window_minutes: run.window_minutes,\n    window_days: run.window_days,\n    lookback_days: run.lookback_days,\n  },\n}));"
+      },
+      "id": "code-fan-out",
+      "name": "Fan Out Tickers",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [448, 384]
+    },
+    {
+      "parameters": {
+        "batchSize": 3,
+        "options": {}
+      },
+      "id": "loop-tickers",
+      "name": "Loop Over Tickers (3)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [672, 384]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all();"
+      },
+      "id": "code-batch",
+      "name": "Batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [896, 384]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "81TNoBqkAasjafvT"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ticker": "={{ $json.ticker }}",
+            "lookback_days": "={{ $json.lookback_days }}",
+            "run_id": "={{ $json.run_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "ticker", "displayName": "ticker", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "lookback_days", "displayName": "lookback_days", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "number" },
+            { "id": "run_id", "displayName": "run_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ]
+        },
+        "mode": "each",
+        "options": { "waitForSubWorkflow": true }
+      },
+      "id": "sub-technical",
+      "name": "Technical Agent",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1120, 192],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Namespace the agent output: the three agents share keys (ticker, status,\n// summary), which a positional merge would otherwise clobber.\nreturn $input.all().map((item) => ({ json: { technical: item.json } }));"
+      },
+      "id": "code-wrap-technical",
+      "name": "Wrap Technical",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1344, 192]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "KnV1HngeDrOcVcqH"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ticker": "={{ $json.ticker }}",
+            "window_minutes": "={{ $json.window_minutes }}",
+            "run_id": "={{ $json.run_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "ticker", "displayName": "ticker", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "window_minutes", "displayName": "window_minutes", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "number" },
+            { "id": "run_id", "displayName": "run_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ]
+        },
+        "mode": "each",
+        "options": { "waitForSubWorkflow": true }
+      },
+      "id": "sub-sentiment",
+      "name": "Sentiment Agent",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1120, 384],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map((item) => ({ json: { sentiment: item.json } }));"
+      },
+      "id": "code-wrap-sentiment",
+      "name": "Wrap Sentiment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1344, 384]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "7SU3ioCng1HsFMkl"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ticker": "={{ $json.ticker }}",
+            "window_days": "={{ $json.window_days }}",
+            "run_id": "={{ $json.run_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "ticker", "displayName": "ticker", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "window_days", "displayName": "window_days", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "number" },
+            { "id": "run_id", "displayName": "run_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ]
+        },
+        "mode": "each",
+        "options": { "waitForSubWorkflow": true }
+      },
+      "id": "sub-earnings",
+      "name": "Earnings Agent",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [1120, 576],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map((item) => ({ json: { earnings: item.json } }));"
+      },
+      "id": "code-wrap-earnings",
+      "name": "Wrap Earnings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1344, 576]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 3,
+        "options": {}
+      },
+      "id": "merge-agents",
+      "name": "Merge Agents",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [1568, 368]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Risk Manager input (§6.2): the three agent outputs for one ticker.\n// agent_status (§4.2) is captured HERE, from the agents' own outputs — the Risk\n// Manager echoes back only the §6.3 summary panels, which carry no `status`.\nconst runId = $('Start Run').first().json.run_id;\nreturn $input.all().map((item) => {\n  const technical = item.json.technical || {};\n  const sentiment = item.json.sentiment || {};\n  const earnings = item.json.earnings || {};\n  const ticker = technical.ticker || sentiment.ticker || earnings.ticker;\n  if (!ticker) {\n    throw new Error('merged agent outputs carry no ticker - check the agent fan-out');\n  }\n  const agent_status = {\n    sentiment: sentiment.status || 'degraded',\n    earnings: earnings.status || 'degraded',\n    technical: technical.status || 'degraded',\n  };\n  return { json: { run_id: runId, ticker, sentiment, earnings, technical, agent_status } };\n});"
+      },
+      "id": "code-assemble-risk",
+      "name": "Assemble Risk Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1792, 384]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "NgajAcDX26YE3i98"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ticker": "={{ $json.ticker }}",
+            "sentiment": "={{ $json.sentiment }}",
+            "earnings": "={{ $json.earnings }}",
+            "technical": "={{ $json.technical }}",
+            "run_id": "={{ $json.run_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "ticker", "displayName": "ticker", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "sentiment", "displayName": "sentiment", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "object" },
+            { "id": "earnings", "displayName": "earnings", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "object" },
+            { "id": "technical", "displayName": "technical", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "object" },
+            { "id": "run_id", "displayName": "run_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ]
+        },
+        "mode": "each",
+        "options": { "waitForSubWorkflow": true }
+      },
+      "id": "sub-risk-manager",
+      "name": "Risk Manager",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [2016, 384],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/recommendations/store",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ run_id: $('Start Run').first().json.run_id, ticker: $json.ticker, draft: $json.draft, critique: $json.critique, final: $json.final, sentiment: $json.sentiment, earnings: $json.earnings, technical: $json.technical, agent_status: $('Assemble Risk Input').itemMatching($itemIndex).json.agent_status }) }}",
+        "options": {}
+      },
+      "id": "http-store-recommendation",
+      "name": "Store Recommendation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2240, 384],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// The store call's response ({stored:1}) replaced the items, so re-emit the Risk\n// Manager outputs before looping back - they are what the report is built from.\nreturn $('Risk Manager').all().map((item) => ({ json: item.json }));"
+      },
+      "id": "code-carry-risk",
+      "name": "Carry Risk Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2464, 560]
+    },
+    {
+      "parameters": {
+        "jsCode": "const start = $('Start Run').first().json;\nconst recommendations = $input.all().map((i) => i.json).filter((r) => r && r.ticker);\nconst counts = {};\nfor (const rec of recommendations) {\n  const call = (rec.final && rec.final.recommendation) || 'unknown';\n  counts[call] = (counts[call] || 0) + 1;\n}\nconst summary = Object.entries(counts).map((entry) => entry[1] + ' ' + entry[0]).join(', ') || 'no recommendations';\nreturn [{ json: { run_id: start.run_id, recommendations, summary } }];"
+      },
+      "id": "code-build-report",
+      "name": "Build Report Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [896, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/report",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ run_id: $json.run_id, recommendations: $json.recommendations, summary: $json.summary }) }}",
+        "options": {}
+      },
+      "id": "http-report",
+      "name": "Render Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 0],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/costs/harvest",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ run_id: $('Start Run').first().json.run_id }) }}",
+        "options": {}
+      },
+      "id": "http-costs-harvest",
+      "name": "Harvest Costs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1344, 0],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Run status (§9.4): a degraded agent or a degraded cost harvest degrades the run;\n// a missing report path is an error. No silent fallbacks.\nconst start = $('Start Run').first().json;\nconst payload = $('Build Report Payload').first().json;\nconst report = $('Render Report').first().json || {};\nconst harvest = $json || {};\n\nconst recommendations = payload.recommendations || [];\nconst anyDegraded = recommendations.some((rec) =>\n  rec.status === 'degraded' ||\n  ['sentiment', 'earnings', 'technical'].some((k) => rec[k] && rec[k].status === 'degraded')\n);\nconst reportPath = report.pdf_path || null;\nconst harvestDegraded = String(harvest.summary || '').startsWith('degraded');\n\nlet status = 'ok';\nif (!reportPath) {\n  status = 'error';\n} else if (anyDegraded || harvestDegraded) {\n  status = 'degraded';\n}\n\nreturn [{\n  json: {\n    run_id: start.run_id,\n    status,\n    report_path: reportPath,\n    tickers: recommendations.length,\n    cost_summary: harvest.summary || null,\n  },\n}];"
+      },
+      "id": "code-assess-run",
+      "name": "Assess Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1568, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANT_SERVICE_URL }}/runs/finish",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ run_id: $json.run_id, status: $json.status, report_path: $json.report_path }) }}",
+        "options": {}
+      },
+      "id": "http-runs-finish",
+      "name": "Finish Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1792, 0],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "Start Run", "type": "main", "index": 0 }]]
+    },
+    "Start Run": {
+      "main": [[{ "node": "Fan Out Tickers", "type": "main", "index": 0 }]]
+    },
+    "Fan Out Tickers": {
+      "main": [[{ "node": "Loop Over Tickers (3)", "type": "main", "index": 0 }]]
+    },
+    "Loop Over Tickers (3)": {
+      "main": [
+        [{ "node": "Build Report Payload", "type": "main", "index": 0 }],
+        [{ "node": "Batch", "type": "main", "index": 0 }]
+      ]
+    },
+    "Batch": {
+      "main": [
+        [
+          { "node": "Technical Agent", "type": "main", "index": 0 },
+          { "node": "Sentiment Agent", "type": "main", "index": 0 },
+          { "node": "Earnings Agent", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Technical Agent": {
+      "main": [[{ "node": "Wrap Technical", "type": "main", "index": 0 }]]
+    },
+    "Wrap Technical": {
+      "main": [[{ "node": "Merge Agents", "type": "main", "index": 0 }]]
+    },
+    "Sentiment Agent": {
+      "main": [[{ "node": "Wrap Sentiment", "type": "main", "index": 0 }]]
+    },
+    "Wrap Sentiment": {
+      "main": [[{ "node": "Merge Agents", "type": "main", "index": 1 }]]
+    },
+    "Earnings Agent": {
+      "main": [[{ "node": "Wrap Earnings", "type": "main", "index": 0 }]]
+    },
+    "Wrap Earnings": {
+      "main": [[{ "node": "Merge Agents", "type": "main", "index": 2 }]]
+    },
+    "Merge Agents": {
+      "main": [[{ "node": "Assemble Risk Input", "type": "main", "index": 0 }]]
+    },
+    "Assemble Risk Input": {
+      "main": [[{ "node": "Risk Manager", "type": "main", "index": 0 }]]
+    },
+    "Risk Manager": {
+      "main": [[{ "node": "Store Recommendation", "type": "main", "index": 0 }]]
+    },
+    "Store Recommendation": {
+      "main": [[{ "node": "Carry Risk Output", "type": "main", "index": 0 }]]
+    },
+    "Carry Risk Output": {
+      "main": [[{ "node": "Loop Over Tickers (3)", "type": "main", "index": 0 }]]
+    },
+    "Build Report Payload": {
+      "main": [[{ "node": "Render Report", "type": "main", "index": 0 }]]
+    },
+    "Render Report": {
+      "main": [[{ "node": "Harvest Costs", "type": "main", "index": 0 }]]
+    },
+    "Harvest Costs": {
+      "main": [[{ "node": "Assess Run", "type": "main", "index": 0 }]]
+    },
+    "Assess Run": {
+      "main": [[{ "node": "Finish Run", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

@@ -72,22 +72,22 @@ NewsAPI key for English coverage (it degrades gracefully to RSS-only without one
 algotrade-project/
 ├── quant_service/              # FastAPI service — all ML, indicators, PDF (§5)
 │   ├── app.py                  #   app entrypoint: uvicorn app:app --port 8000
-│   ├── routers/                #   one module per endpoint: ohlc, indicators, sentiment, news, earnings, report, validate, riskmanager
-│   ├── data/                   #   yahoo, newsapi, rss, news_store, maya, earnings_store, textclean, cache, ingest, tls
+│   ├── routers/                #   one module per endpoint: ohlc, indicators, sentiment, news, earnings, report, validate, riskmanager, runs, costs
+│   ├── data/                   #   yahoo, newsapi, rss, news_store, maya, earnings_store, run_store, textclean, cache, ingest, tls
 │   ├── indicators/             #   calc  (pandas-ta computation behind /indicators)
 │   ├── nlp/                    #   finbert, hebert, language_detect   (sentiment models)
 │   ├── pdf/                    #   render (WeasyPrint), charts (matplotlib)
 │   ├── schemas/                #   Pydantic models — validated at every LLM boundary
-│   ├── ops/                    #   cost_log, cost_report             (observability)
+│   ├── ops/                    #   cost_log, cost_report, n8n_api     (observability, §9.4)
 │   ├── templates/              #   report.html.j2 + report.css        (Jinja2 → PDF)
 │   ├── store_init.py           #   create the DuckDB schema (run once)
 │   ├── smoke_test.py           #   cross-platform endpoint check
 │   ├── store.duckdb            #   local cache/persistence (gitignored)
 │   └── requirements.txt
 ├── n8n/                        # n8n workflows (§6)
-│   ├── orchestrator.workflow.json
+│   ├── orchestrator.workflow.json   #   top-level: fan-out (concurrency 3) → Risk Manager → costs → report (§6.1)
 │   ├── agents/                 #   sentiment, earnings, technical, risk_manager sub-workflows
-│   └── README_credentials.md   #   how to wire the OpenRouter credential
+│   └── README_credentials.md   #   how to wire the OpenRouter credential + the n8n API key
 ├── prompts/                    # version-controlled prompts (§7)
 │   ├── sentiment_examples.jsonl, earnings_examples.jsonl   # few-shot examples
 │   └── risk_manager_{draft,critique,final}.md             # the 3 critique passes
@@ -111,7 +111,29 @@ below for which step owns what.
 
 ## Setup & quick start
 
-> Current state (through **Step 7**): the **Risk Manager sub-workflow**
+> Current state (through **Step 8**): the **Orchestrator**
+> (`n8n/orchestrator.workflow.json`) is live — the top-level workflow that runs the whole
+> team (§6.1). It calls **`POST /runs/start`** (the service mints the `run_id`, opens the
+> `runs` row, and hands back the watchlist and windows from `config/universe.yaml`, so the
+> workflow hardcodes nothing), **fans the three analysis agents out over the watchlist in a
+> concurrency-3 loop**, feeds their three outputs to the **Risk Manager** per ticker, and
+> persists each §6.3 result — `draft`, `critique`, `final`, the three agent outputs and
+> `agent_status` — via **`POST /recommendations/store`**. It then calls **`POST
+> /costs/harvest`**, **`POST /report`** (still the Step-9 stub) and **`POST /runs/finish`**.
+>
+> **Cost logging (§9.4) works differently than first assumed, for a real reason.** n8n does
+> not expose LLM token usage *to* a workflow: the LLM chain node emits only its text, and a
+> Code node cannot read the Chat Model sub-node's run data — so an agent cannot log its own
+> cost. n8n *does* record usage in the **execution**, so `/costs/harvest` reads each agent
+> sub-execution back out of **n8n's REST API** and pulls the real `tokenUsage`
+> (prompt/completion), the model, and each call's `executionTime` → `latency_ms`. `usd_cost`
+> is computed server-side from the §7 price table, and rows are aggregated per
+> `(run_id, agent, model)` exactly as the §4.2 `costs` key requires. Attribution is exact,
+> not time-based: every agent takes a `run_id`, so only executions carrying *this* `run_id`
+> are counted. This needs `N8N_API_URL` + `N8N_API_KEY` (§11.1) and the agent workflow ids in
+> `config/universe.yaml`. Summarize any run with **`python -m ops.cost_report`**.
+>
+> Earlier state (through **Step 7**): the **Risk Manager sub-workflow**
 > (`n8n/agents/risk_manager.json`) is live — it runs **once per ticker** after the three
 > analysis agents and consumes their outputs through a **three-stage critique loop** (§3.4):
 > **draft → devil's-advocate critique → final**, all Claude Haiku 4.5 at temperature 0, each
@@ -123,9 +145,8 @@ below for which step owns what.
 > /riskmanager/context`** endpoint — so the rubric is a *mechanism*, not just prompt text. After
 > the final pass an **Apply Rubric Clamp** node re-enforces the agreement-count ceiling and the
 > conviction caps deterministically, appending an audit note to the rationale rather than
-> rewriting it. Output is the §6.3 shape with all three passes visible. Cost logging and the
-> `recommendations`-table write are deferred to Step 8. See `n8n/README_credentials.md → Risk
-> Manager`.
+> rewriting it. Output is the §6.3 shape with all three passes visible. See
+> `n8n/README_credentials.md → Risk Manager`.
 >
 > Earlier state (through **Step 6**): the **Earnings Agent sub-workflow**
 > (`n8n/agents/earnings.json`) is live — it calls **`POST /earnings/fetch`** (the Maya
@@ -242,22 +263,32 @@ python -c "import duckdb; print(sorted(r[0] for r in duckdb.connect('store.duckd
 
 ### 5. Run the service
 
-Export `NEWSAPI_API_KEY` in this shell first (so `/news/fetch` reaches NewsAPI — skip it to
-run RSS-only), then start uvicorn:
+Export the service's keys in this shell first, then start uvicorn. `NEWSAPI_API_KEY` lets
+`/news/fetch` reach NewsAPI (skip it to run RSS-only); `N8N_API_KEY` lets `/costs/harvest`
+read LLM token usage out of n8n (Step 8 — without it the harvest *degrades*, it never fails
+a run):
 
 ```powershell
 # Windows (PowerShell), from quant_service/:
 $env:NEWSAPI_API_KEY = "<your-newsapi-key>"   # optional; omit for RSS-only
+$env:N8N_API_URL     = "http://localhost:5678"
+$env:N8N_API_KEY     = "<your-n8n-api-key>"   # n8n -> Settings -> n8n API -> create key
 python -m uvicorn app:app --port 8000
 ```
 
 ```bash
 # macOS/Linux, from quant_service/:
 export NEWSAPI_API_KEY="<your-newsapi-key>"   # optional; omit for RSS-only
+export N8N_API_URL="http://localhost:5678"
+export N8N_API_KEY="<your-n8n-api-key>"
 uvicorn app:app --port 8000
 ```
 
 Leave it running; interactive API docs are at <http://localhost:8000/docs>.
+
+> **If `/sentiment` degrades with a FinBERT/HeBERT *download* error** while the weights are
+> already cached (a TLS-intercepting network breaks transformers' hub check), add
+> `HF_HUB_OFFLINE=1` to the service's environment — it then loads straight from `HF_HOME`.
 
 ### 6. Verify the endpoints
 
@@ -415,6 +446,59 @@ summary, status }`) and writes one row per article — **both** scores — into 
 python -c "import duckdb; print(duckdb.connect('store.duckdb').sql('SELECT id, symbol, language, llm_sentiment, model_sentiment, disagreement FROM news').df())"
 ```
 
+### 9. Run the whole team: the Orchestrator (Step 8)
+
+The orchestrator (`n8n/orchestrator.workflow.json`) runs everything end-to-end: it opens a
+run, fans the three analysis agents out over the watchlist (**concurrency 3**), calls the
+Risk Manager per ticker, persists each result, harvests the run's LLM costs, renders the
+report (Step-9 stub for now) and closes the run.
+
+Two pieces of setup are specific to this step:
+
+1. **Start n8n so `$env` works.** The workflows read the service URL from
+   `{{ $env.QUANT_SERVICE_URL }}`, and n8n **blocks `$env` by default** (`access to env vars
+   denied`). Launch n8n with:
+
+   ```powershell
+   # Windows (PowerShell):
+   $env:N8N_BLOCK_ENV_ACCESS_IN_NODE = "false"
+   $env:QUANT_SERVICE_URL            = "http://127.0.0.1:8000"   # 127.0.0.1, not localhost
+   npx n8n
+   ```
+
+   Use `127.0.0.1`, not `localhost`: Node resolves `localhost` to IPv6 first and uvicorn
+   binds IPv4 (`ECONNREFUSED ::1:8000`).
+
+2. **Create an n8n API key** (*Settings → n8n API → Create an API key*) and export it for the
+   **quant service** as `N8N_API_KEY` (step 5). `/costs/harvest` reads token usage through
+   that API — it is the only place n8n exposes it. Without the key the harvest degrades
+   cleanly (no costs rows), it does not fail the run.
+
+Then import `n8n/orchestrator.workflow.json` (*Workflows → Import from File*). It calls the
+four agents **by workflow id** — the ids in `config/universe.yaml → n8n_workflow_ids` and in
+the orchestrator's Execute Sub-workflow nodes must match the ids of your imported agents (the
+id is in the editor URL, `/workflow/<id>`). Fix both if they differ.
+
+> **Trim the watchlist for a first run.** The committed watchlist is all 35 TA-35 names —
+> that is 35 × 4 sub-workflows and burns the NewsAPI free tier (100 req/day) in one go. For a
+> demo run set `watchlist: ["TEVA.TA","ESLT.TA"]` in `config/universe.yaml` (the orchestrator
+> reads it from the service at `/runs/start`, so no workflow edit is needed).
+
+Hit **Execute workflow**, then check what the run wrote (§4.2) — from `quant_service/`:
+
+```bash
+# one runs row, one recommendations row per ticker (all three passes populated):
+python -c "import duckdb; c=duckdb.connect('store.duckdb'); print(c.sql('SELECT run_id, mode, status, report_path, finished_at FROM runs ORDER BY started_at DESC LIMIT 3').df()); print(c.sql('SELECT run_id, ticker, final->>\'recommendation\' AS call, final->>\'conviction\' AS conviction, agent_status FROM recommendations ORDER BY run_id DESC LIMIT 10').df())"
+
+# every LLM call of the run, priced from the §7 table:
+python -m ops.cost_report
+```
+
+Expect one `runs` row (`status` `ok`/`degraded`, `finished_at` set), one `recommendations`
+row per ticker with `draft`, `critique`, `final`, `sentiment`, `earnings`, `technical` and
+`agent_status` all populated, and `costs` rows per `(run_id, agent, model)` with real token
+counts — Haiku 4.5 for sentiment/earnings/risk_manager, Gemini Flash-Lite for technical.
+
 ---
 
 ## Configuration & API keys
@@ -434,11 +518,13 @@ the shell that runs uvicorn (n8n loads `.env` itself). Everything else keeps its
 | `OPENROUTER_API_KEY` | Step 3 (first LLM call) | <https://openrouter.ai> → sign up → **Keys** → create key. Pay-as-you-go; a few dollars covers many runs. |
 | `NEWSAPI_API_KEY` | Step 5 (Sentiment Agent) | <https://newsapi.org/register> → free tier (100 req/day). |
 | `ALPHAVANTAGE_API_KEY` | — (not usable) | Listed in the design as the OHLC backup, but **verified to have no TASE (`*.TA`) coverage** (free tier; `TEVA.TLV`/`.TA` → *"Invalid API call"*, and adjusted data is premium). Yahoo Finance is the only working source for this watchlist — safe to leave blank. See [Step 1 notes](#known-gotchas). |
-| `QUANT_SERVICE_URL` | Step 3 (n8n → service) | Leave `http://localhost:8000` for local; use `http://host.docker.internal:8000` if n8n runs in Docker. |
+| `QUANT_SERVICE_URL` | Step 3 (n8n → service) | Set it in **n8n's own environment** (with `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`, or `$env` is denied). Use `http://127.0.0.1:8000` locally — not `localhost`; `http://host.docker.internal:8000` if n8n runs in Docker. |
+| `N8N_API_URL` | Step 8 (`/costs/harvest`) | Leave `http://localhost:5678`. Read by the **quant service** to reach n8n's REST API. |
+| `N8N_API_KEY` | Step 8 (`/costs/harvest`) | n8n → *Settings → n8n API* → create key. The only place n8n exposes LLM token usage; export it for the **quant service**. Missing key ⇒ harvest degrades, never fails the run. |
 | `DUCKDB_PATH` | Step 1 | Leave default `quant_service/store.duckdb`. |
 | `REPORT_DIR` | Step 9 | Leave default `reports`. |
 | `TZ` | Step 10 | Leave `Asia/Jerusalem` (store UTC, render local). |
-| `HF_HOME` | Step 4 | Local Hugging Face cache dir, e.g. `.hf_cache` (avoids re-downloading FinBERT/HeBERT). |
+| `HF_HOME` | Step 4 | Local Hugging Face cache dir, e.g. `.hf_cache` (avoids re-downloading FinBERT/HeBERT). Add `HF_HUB_OFFLINE=1` if a TLS-intercepting network breaks the hub check despite cached weights. |
 
 ---
 
@@ -456,11 +542,12 @@ The system is built and reviewed **one step at a time** (full detail in `CLAUDE.
 | 5 | Sentiment Agent sub-workflow (dual scoring, few-shot, `news` table) | ✅ done |
 | 6 | Earnings Agent (Maya scraping + self-consistency number extraction) | ✅ done |
 | 7 | Risk Manager three-stage critique loop (n8n + `/riskmanager/context`) | ✅ done |
-| 8 | Orchestrator fan-out + cost logging | ⬜ |
+| 8 | Orchestrator fan-out + cost logging (`/runs/*`, `/recommendations/store`, `/costs/harvest`, `python -m ops.cost_report`) | ✅ done |
 | 9 | `/report` real (WeasyPrint + Jinja2) | ⬜ |
 | 10 | Schedule trigger gated by TASE hours | ⬜ |
 | 11 | Evaluation harness (`python -m eval.run`) | ⬜ |
 | 12 | README + supporting docs for a grader | ⬜ |
+| 13 | Chat assistant front end (bonus, §6.5) — Chat Trigger → AI Agent that runs the team conversationally; the agent is a **router, not an analyst** | ⬜ |
 
 ---
 
@@ -478,6 +565,16 @@ The system is built and reviewed **one step at a time** (full detail in `CLAUDE.
 
 - **PowerShell `curl`** is `Invoke-WebRequest`, not real curl — use `python smoke_test.py`,
   `Invoke-RestMethod`, or `curl.exe` (see the expandable section above).
+- **Run the service from `quant_service/.venv`** — not system Python. Playwright (Earnings
+  agent) and the TLS truststore (NewsAPI/RSS) live in the venv; on the wrong interpreter the
+  run still *completes*, but Sentiment and Earnings come back `degraded` with a
+  `CERTIFICATE_VERIFY_FAILED` / `playwright not installed` reason, and the Risk Manager
+  correctly forces `avoid` (2+ degraded agents, §3.4) — a confusing but *honest* result.
+- **DuckDB `TIMESTAMP` is timezone-naive (Step 8):** binding a tz-*aware* Python datetime
+  makes DuckDB convert it to **local** time and drop the offset, so a 12:00Z write lands as
+  15:00 on an Asia/Jerusalem box — breaking the §11.2 "store UTC" rule. Writers must
+  normalize to naive UTC first (`data/run_store.py: _db_utc()`). This once silently zeroed
+  the cost harvest, because every sub-execution looked older than its own run.
 - **Corporate TLS proxy / antivirus (Step 1):** behind a TLS-inspecting proxy, `yfinance`'s
   HTTP backend can fail certificate verification — and yfinance often surfaces it as a
   *misleading* "Too Many Requests / rate limited" (it is **not** actually a rate limit). The

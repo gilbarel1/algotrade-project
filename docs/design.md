@@ -17,7 +17,7 @@ The system runs on self-hosted n8n with language-model access via OpenRouter; co
 - **News.** NewsAPI for English coverage and Israeli English-language outlets (Globes, Reuters, Bloomberg, Calcalist English) via targeted RSS. Hebrew headlines from Ynet/Calcalist RSS are used as a fallback and translated by the language model.
 - **Earnings disclosures.** The English MAYA page at `maya.tase.co.il/en/reports/companies` is primary; the Hebrew page is fallback for names that report only in Hebrew. The paid TASE MAYA API is out of scope.
 - **Decision scope.** An analytical recommendation report (long / short / hold / avoid with conviction and rationale) per ticker and an overall watchlist summary. No real or simulated execution.
-- **Run modes.** Manual trigger for demonstrations; scheduled trigger hourly during TASE hours (Sun–Thu, ~09:30–17:30 Asia/Jerusalem).
+- **Run modes.** Manual trigger for demonstrations; scheduled trigger hourly during TASE hours (Sun–Thu, ~09:30–17:30 Asia/Jerusalem); and a **chat trigger** (§6.5) that runs the same pipeline conversationally for an ad-hoc ticker.
 - **Delivery.** A PDF report saved to `reports/YYYY-MM-DD/HHMM/report.pdf`. Email and Telegram delivery are out of scope but the report step is structured so either can be added with a single extra n8n node.
 - **Deployment.** Local only.
 
@@ -261,6 +261,15 @@ rss_feeds:
 # Day-of-week: 0=Sunday in n8n cron. DST is handled by the TZ setting, not the cron expression.
 schedule_cron: "0 10-17 * * 0-4"
 report_dir: "reports"
+# n8n sub-workflow ids (§6.2). Used by /costs/harvest to attribute each agent
+# sub-execution's LLM calls to an agent name in `costs` (§9.4). Filled in after the
+# agent workflows are imported into n8n.
+n8n_workflow_ids:
+  technical: "81TNoBqkAasjafvT"
+  sentiment: "KnV1HngeDrOcVcqH"
+  earnings: "7SU3ioCng1HsFMkl"
+  risk_manager: "NgajAcDX26YE3i98"
+  # chat: "<id>"   # §6.5 chat assistant — added in Step 13 so its tokens reach `costs`
 ```
 
 `config/rubric.yaml` holds the Risk Manager rubric thresholds.
@@ -282,6 +291,10 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
 | `POST /earnings/store` | Upsert the classified disclosure + self-consistency extraction into the `earnings` table (§4.2); n8n cannot write DuckDB directly |
 | `POST /report`     | Render PDF from Risk Manager output + run id                                 |
 | `POST /validate`   | Validate an agent's raw LLM JSON against its Pydantic schema in `schemas/` (the §9.4 LLM-boundary guardrail; n8n's embedded Python cannot import the repo's schemas, so validation is served over HTTP) |
+| `POST /runs/start`   | Open a run: mint the `run_id`, write the `runs` row (§4.2), and return the run's config (watchlist + windows from `config/universe.yaml`) so the orchestrator never hardcodes them (§4.4). n8n cannot write DuckDB directly, so every orchestration write is served over HTTP — same precedent as `/news/store` and `/earnings/store` |
+| `POST /runs/finish`  | Close a run: set `finished_at`, `status`, `report_path` on the `runs` row |
+| `POST /recommendations/store` | Upsert one per-ticker `recommendations` row (draft/critique/final + the three agent outputs + `agent_status`), keyed `(run_id, ticker)` (§4.2) |
+| `POST /costs/harvest` | Log the run's LLM costs into `costs` (§4.2, §9.4). Token usage is **not reachable inside an n8n workflow** — the LLM chain node emits only its text and a Code node cannot read the Chat Model sub-node's run data — so the quant service reads the agents' sub-executions from n8n's REST API (`N8N_API_URL`/`N8N_API_KEY`, §11.1) and pulls the real `tokenUsage` (prompt/completion), the model, and each call's `executionTime` (→ `latency_ms`) per LLM call. `usd_cost` is computed server-side from the §7 price table. The orchestrator calls this once after the fan-out, when every sub-execution has finished and been persisted. Idempotent: re-harvesting a `run_id` rewrites the same totals. Degrades (never 500s) if the n8n API is unreachable |
 | `POST /riskmanager/context` | Serve the Risk Manager sub-workflow its three pass prompts (from `prompts/risk_manager_*.md`), the rubric thresholds (from `config/rubric.yaml`), and the **deterministic** §3.4 rubric facts (directional mapping, strong-signal flags, agreement counts, applicable conviction caps) computed from the agent outputs. Keeps prompts and rubric server-side (never hardcoded in the workflow) and makes the rubric a mechanism, not just an instruction — mirrors the server-side few-shot loading in `/news/fetch` and `/earnings/fetch`. Read-only; degrades (never 500s) on partial agent input |
 
 ```jsonc
@@ -349,6 +362,36 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
                          "guidance":{"value":"ambiguous","confidence":1}}}] }
 { "stored":1 }
 
+// POST /runs/start
+{ "mode":"manual" }                       // mode ∈ {manual, scheduled, chat}  (chat = §6.5)
+{ "run_id":"r_2026-06-22T13:00", "started_at":"2026-06-22T10:00:00+00:00",
+  "mode":"manual",
+  "watchlist":["TEVA.TA","NICE.TA", …],   // config/universe.yaml (§4.4)
+  "window_minutes":120, "window_days":5, "lookback_days":180,
+  "summary":"run r_2026-06-22T13:00 started (manual): 5 ticker(s)." }
+
+// POST /runs/finish
+{ "run_id":"r_2026-06-22T13:00", "status":"ok",      // status ∈ {ok, degraded, error}
+  "report_path":"reports/2026-06-22/1300/report.pdf" }
+{ "run_id":"r_2026-06-22T13:00", "finished_at":"2026-06-22T10:04:12+00:00",
+  "status":"ok", "summary":"run r_2026-06-22T13:00 finished (ok)." }
+
+// POST /recommendations/store
+{ "run_id":"r_2026-06-22T13:00", "ticker":"TEVA.TA",
+  "draft":{ /* §6.3 */ }, "critique":{ /* §6.3 */ }, "final":{ /* §6.3 */ },
+  "sentiment":{ /* §3.1 */ }, "earnings":{ /* §3.2 */ }, "technical":{ /* §3.3 */ },
+  "agent_status":{"sentiment":"ok","earnings":"degraded","technical":"ok"} }
+{ "stored":1 }
+
+// POST /costs/harvest
+{ "run_id":"r_2026-06-22T13:00" }
+{ "run_id":"r_2026-06-22T13:00", "rows":4, "calls":9, "usd_cost":0.0421,
+  "by_agent":[{"agent":"technical","model":"google/gemini-2.5-flash-lite",
+               "input_tokens":812,"output_tokens":96,"usd_cost":0.0001,
+               "latency_ms":1814,"calls":1}, …],
+  "summary":"harvested 9 LLM call(s) across 4 agent(s): $0.0421." }
+// Unreachable n8n API degrades, never 500s: summary prefixed "degraded: <reason>".
+
 // POST /report
 { "run_id":"r_2026-06-22T13:00", "recommendations":[ /* per-ticker, see §6.3 */ ],
   "summary":"3 long, 1 hold, 1 avoid." }
@@ -390,11 +433,12 @@ PDF rendering uses **WeasyPrint** over a **Jinja2** template (`templates/report.
 
 Top-level flow:
 
-1. Create a `run_id` and write a row into `runs`.
+1. Call `POST /runs/start` — the service mints the `run_id`, writes the `runs` row, and returns the watchlist and window parameters from `config/universe.yaml`.
 2. For each ticker (n8n loop, concurrency 3): call the three analysis sub-workflows in parallel.
-3. Call the Risk Manager sub-workflow once per ticker; it runs the three-stage critique loop internally.
-4. Call `POST /report` to render the PDF.
-5. Update the `runs` row with `finished_at`, `status`, `report_path`.
+3. Call the Risk Manager sub-workflow once per ticker; it runs the three-stage critique loop internally. Persist each result with `POST /recommendations/store`.
+4. Call `POST /costs/harvest` to log every LLM call of the run into `costs` (§9.4 — token usage is only available from n8n's execution API, so it is harvested once the sub-executions have finished).
+5. Call `POST /report` to render the PDF.
+6. Call `POST /runs/finish` to set `finished_at`, `status`, `report_path` on the `runs` row.
 
 ### 6.2 Sub-workflow input / output
 
@@ -430,6 +474,19 @@ Top-level flow:
 ### 6.4 OpenRouter wiring
 
 Each sub-workflow holds its own OpenRouter Chat Model node, so model selection is per-agent. The OpenRouter credential is created once at the n8n level. On n8n < 1.78, use the OpenAI node with base URL `https://openrouter.ai/api/v1`.
+
+### 6.5 Chat assistant front end (`mode: "chat"`)
+
+A third entry point alongside the manual and scheduled triggers: an n8n **Chat Trigger** → **AI Agent** (`n8n/chat_assistant.workflow.json`) that turns the pipeline into a conversational "investment team" — *"what do you think about Teva?"* runs the real fan-out for that ticker and answers with the Risk Manager's call.
+
+- **The chat agent is a router, not an analyst.** This is the load-bearing constraint. It holds **no analytical authority**: it may only invoke tools and relay what they return. It must never emit a recommendation, conviction, sentiment score, indicator, or financial figure of its own — those come from the Risk Manager and the quant service, or they do not appear. Letting the chat model *discuss* the stocks would bypass both the §3.4 critique loop and the §3.2 "never invent numbers" guarantee, which are the system's differentiators. Its system prompt states this explicitly, and the §9.1 eval set gains a small "refusal" case: asked for a figure the tools did not return, it declines instead of inventing one.
+- **Tool.** One **Call n8n Workflow Tool** bound to the orchestrator. The orchestrator therefore gains an **Execute Workflow Trigger** with an optional `tickers` input (comma-separated); when supplied it overrides the `config/universe.yaml` watchlist for that run, so an ad-hoc single-ticker request reuses the identical fan-out → Risk Manager → persistence path rather than duplicating it. Omitted ⇒ the full watchlist, exactly as the manual/scheduled runs behave.
+- **Memory.** A buffer-window memory holds the conversation so follow-ups ("and NICE?") resolve to a ticker.
+- **Model.** `anthropic/claude-haiku-4.5` at `temperature=0` (routing, not reasoning).
+- **Persistence and cost.** A chat-initiated run is a first-class run: it calls `/runs/start` with `mode: "chat"` and writes `runs`, `recommendations`, and `costs` like any other. The chat workflow's own id is added to `n8n_workflow_ids` as the `chat` agent so `/costs/harvest` attributes its tokens too (§9.4).
+- **Latency and expectation-setting.** A single ticker takes ~40–80 s (Maya's headless scrape plus the three Risk Manager passes), so the assistant announces the wait before calling the tool. Reports still land on disk per §8.3; the chat reply is a summary, not a replacement for the PDF.
+
+Canonical enum update: run `mode ∈ {manual, scheduled, chat}` (§5 `/runs/start`).
 
 ---
 
@@ -508,7 +565,7 @@ A small evaluation harness ships with the system; results live in DuckDB (`evals
 
 ### 9.4 Observability
 
-- **Cost logging.** Every LLM call writes `{run_id, agent, model, input_tokens, output_tokens, usd_cost, latency_ms}` to `costs`. A simple `python -m ops.cost_report` summarizes the last N runs.
+- **Cost logging.** Every LLM call is logged as `{run_id, agent, model, input_tokens, output_tokens, usd_cost, latency_ms}` in `costs`, aggregated per `(run_id, agent, model)` as the §4.2 primary key requires. n8n exposes token usage only through its execution API (not to the workflow itself), so the orchestrator calls `POST /costs/harvest` after the fan-out and the quant service reads each agent sub-execution's real `tokenUsage` and `executionTime`. A simple `python -m ops.cost_report` summarizes the last N runs.
 - **Structured outputs.** Every LLM-to-agent boundary uses a **Pydantic schema**; a malformed response triggers one automatic retry with a stricter instruction before the agent returns a `degraded` result.
 - **Degraded mode.** On any external-source failure or rate-limit, the agent returns its partial result with `status: "degraded"` and a reason; the Risk Manager downgrades conviction accordingly. No silent fallbacks, no fabrication.
 
@@ -520,17 +577,18 @@ A small evaluation harness ships with the system; results live in DuckDB (`evals
 n8n-investment-team/
 ├── n8n/
 │   ├── orchestrator.workflow.json
+│   ├── chat_assistant.workflow.json   # §6.5 Chat Trigger -> AI Agent (router only); Step 13
 │   ├── agents/ {sentiment,earnings,technical,risk_manager}.json
 │   └── README_credentials.md
 ├── quant_service/
 │   ├── app.py
-│   ├── routers/ {ohlc,indicators,sentiment,news,earnings,report,validate,riskmanager}.py  # news = /news/fetch + /news/store; earnings = /earnings/fetch + /earnings/store; riskmanager = /riskmanager/context (§3.4 prompts + rubric + deterministic facts)
-│   ├── data/ {yahoo.py, newsapi.py, maya.py, rss.py, news_store.py, earnings_store.py, textclean.py, tls.py, cache.py, ingest.py}  # ingest = OHLC pull/clean CLI (python -m data.ingest); news_store/earnings_store = table upserts; textclean = shared §4.3 text cleaning + term matching; maya = Playwright scraper; tls = OS-trust SSL context for httpx
+│   ├── routers/ {ohlc,indicators,sentiment,news,earnings,report,validate,riskmanager,runs,costs}.py  # news = /news/fetch + /news/store; earnings = /earnings/fetch + /earnings/store; riskmanager = /riskmanager/context (§3.4 prompts + rubric + deterministic facts); runs = /runs/start + /runs/finish + /recommendations/store (§6.1 orchestration writes); costs = /costs/harvest (§9.4)
+│   ├── data/ {yahoo.py, newsapi.py, maya.py, rss.py, news_store.py, earnings_store.py, run_store.py, textclean.py, tls.py, cache.py, ingest.py}  # ingest = OHLC pull/clean CLI (python -m data.ingest); news_store/earnings_store/run_store = table upserts (run_store = runs + recommendations); textclean = shared §4.3 text cleaning + term matching; maya = Playwright scraper; tls = OS-trust SSL context for httpx
 │   ├── indicators/ {calc.py}  # pandas-ta computation behind /indicators (§3.3, §5)
 │   ├── nlp/  {finbert.py, hebert.py, language_detect.py}
 │   ├── pdf/  {render.py, charts.py}
 │   ├── schemas/ {sentiment.py, earnings.py, technical.py, risk_manager.py}  # Pydantic
-│   ├── ops/  {cost_log.py, cost_report.py}
+│   ├── ops/  {cost_log.py, cost_report.py, n8n_api.py}  # cost_log = §7 pricing + costs upsert; n8n_api = read-only client for n8n's execution API (token usage, §9.4)
 │   ├── templates/ {report.html.j2, report.css}
 │   ├── store.duckdb
 │   └── requirements.txt
@@ -556,6 +614,8 @@ OPENROUTER_API_KEY        # all LLM access
 NEWSAPI_API_KEY           # English news
 ALPHAVANTAGE_API_KEY      # OHLC backup
 QUANT_SERVICE_URL         # http://localhost:8000 (or host.docker.internal:8000 if n8n is in Docker)
+N8N_API_URL               # http://localhost:5678 — n8n REST API, read by /costs/harvest (§9.4)
+N8N_API_KEY               # n8n API key (Settings → n8n API); token usage is only exposed there
 DUCKDB_PATH               # quant_service/store.duckdb
 REPORT_DIR                # reports
 TZ                        # Asia/Jerusalem
@@ -563,6 +623,8 @@ HF_HOME                   # local Hugging Face cache (avoids re-downloads)
 ```
 
 Only `.env.example` is committed. `reports/`, `store.duckdb`, and the HF cache are gitignored.
+
+n8n itself must be started with `QUANT_SERVICE_URL` in its environment **and** `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`, otherwise the `{{ $env.QUANT_SERVICE_URL }}` expressions in the workflows resolve to `access to env vars denied` (n8n blocks `$env` by default).
 
 ### 11.2 Operations notes
 

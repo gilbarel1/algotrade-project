@@ -1,13 +1,14 @@
 watchlist:
   # Original starter set (§1) — terms below are hand-tuned; do not change lightly.
-  ["TEVA.TA","NICE.TA","LUMI.TA","POLI.TA","ESLT.TA",
+  ["TEVA.TA","NICE.TA"]
+  # ,"LUMI.TA","POLI.TA","ESLT.TA",
   # Full TA-35 constituents (Wikipedia list, cross-checked vs TradingView 2026-07;
   # symbols are Yahoo/TASE *.TA). Expanding here is the design's intended scaling
   # point (§1: "the full list lives in config").
-   "OPCE.TA","ORA.TA","ICL.TA","AMOT.TA","ENLT.TA","BEZQ.TA","BIG.TA","FIBI.TA",
-   "DSCT.TA","DLEKG.TA","DIMRI.TA","PHOE.TA","HARL.TA","TSEM.TA","CLIS.TA",
-   "MVNE.TA","MGDL.TA","MZTF.TA","MLSR.TA","MMHD.TA","NVPT.TA","NVMI.TA",
-   "NWMD.TA","NXSN.TA","AZRG.TA","FTAL.TA","CAMT.TA","SAE.TA","STRS.TA","SPEN.TA"]
+  # "OPCE.TA","ORA.TA","ICL.TA","AMOT.TA","ENLT.TA","BEZQ.TA","BIG.TA","FIBI.TA",
+  # "DSCT.TA","DLEKG.TA","DIMRI.TA","PHOE.TA","HARL.TA","TSEM.TA","CLIS.TA",
+  # "MVNE.TA","MGDL.TA","MZTF.TA","MLSR.TA","MMHD.TA","NVPT.TA","NVMI.TA",
+  # "NWMD.TA","NXSN.TA","AZRG.TA","FTAL.TA","CAMT.TA","SAE.TA","STRS.TA","SPEN.TA"]
 news_window_minutes: 120
 earnings_window_days: 5
 ohlc_lookback_days: 180
@@ -88,3 +89,13 @@ rss_feeds:
 # Day-of-week: 0=Sunday in n8n cron. DST is handled by the TZ setting, not the cron expression.
 schedule_cron: "0 10-17 * * 0-4"
 report_dir: "reports"
+
+# n8n sub-workflow ids (§6.2, §4.4). Filled in after importing the agent workflows
+# into n8n (Workflows -> the id in the editor URL). /costs/harvest uses these to
+# attribute each agent sub-execution's LLM calls to an agent name in `costs` (§9.4),
+# since n8n exposes token usage only through its execution API.
+n8n_workflow_ids:
+  technical: "81TNoBqkAasjafvT"
+  sentiment: "KnV1HngeDrOcVcqH"
+  earnings: "7SU3ioCng1HsFMkl"
+  risk_manager: "NgajAcDX26YE3i98"

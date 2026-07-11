@@ -14,18 +14,60 @@ importing a workflow, open each Chat Model node and re-select your OpenRouter cr
 
 ## Environment
 
-The workflows read `QUANT_SERVICE_URL` via `{{ $env.QUANT_SERVICE_URL }}`:
+The workflows read `QUANT_SERVICE_URL` via `{{ $env.QUANT_SERVICE_URL }}`, so it must be set
+in **n8n's own environment** (not the service's, and not `.env` alone):
 
-- n8n run directly on the host: `QUANT_SERVICE_URL=http://localhost:8000`.
+- n8n run directly on the host: `QUANT_SERVICE_URL=http://127.0.0.1:8000`. Use the IPv4
+  literal, **not** `localhost` — Node resolves `localhost` to IPv6 first and uvicorn binds
+  IPv4, which surfaces as `ECONNREFUSED ::1:8000`.
 - n8n in Docker (service on the host): `QUANT_SERVICE_URL=http://host.docker.internal:8000`.
-- `$env` access requires `N8N_BLOCK_ENV_ACCESS_IN_NODE` to be unset or `false` (the default).
+- **`$env` is blocked by default and must be explicitly enabled:** without
+  `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` every `$env` expression fails with *"access to env
+  vars denied"* (the gate is literally `!== 'false'`, so unset is **blocked**, not allowed).
+  Set both variables in the shell that launches n8n and restart it:
+
+  ```powershell
+  $env:N8N_BLOCK_ENV_ACCESS_IN_NODE = "false"
+  $env:QUANT_SERVICE_URL            = "http://127.0.0.1:8000"
+  npx n8n
+  ```
+
+## The n8n API key (Step 8 — cost logging)
+
+`/costs/harvest` reads LLM token usage out of n8n's REST API, because **n8n never exposes it
+to the workflow itself**: the LLM chain node emits only its text, and a Code node cannot read
+the Chat Model sub-node's run data. The usage *is* recorded in the execution, so the quant
+service reads it back from there.
+
+1. n8n → *Settings* → *n8n API* → **Create an API key**.
+2. Export it for the **quant service** (not n8n): `N8N_API_KEY=<key>`, plus
+   `N8N_API_URL=http://localhost:5678`.
+
+Without the key the harvest degrades cleanly (`degraded: N8N_API_KEY is not set …`, no
+`costs` rows) — it never fails a run.
 
 ## Importing an agent sub-workflow
 
 1. n8n → *Workflows* → *Import from File* → pick `n8n/agents/<agent>.json`.
 2. Re-select the OpenRouter credential on the Chat Model node(s) (see above).
 3. Save. Sub-workflows start with an **Execute Workflow Trigger** — run them via
-   *Execute workflow* with pinned/manual input, or from the orchestrator (Step 8).
+   *Execute workflow* with pinned/manual input, or from the orchestrator.
+
+## Importing the orchestrator (`orchestrator.workflow.json`, Step 8)
+
+The top-level workflow (§6.1). It needs **no credential** — it only talks to the quant
+service over HTTP — but it calls the four agents **by workflow id**:
+
+1. Import the four agent sub-workflows first and note each id (the editor URL is
+   `/workflow/<id>`).
+2. Import `n8n/orchestrator.workflow.json`. Its four **Execute Sub-workflow** nodes (Technical,
+   Sentiment, Earnings, Risk Manager) carry the ids of the workflows in *this* n8n instance —
+   if yours differ, re-pick the workflow in each node.
+3. The same ids must appear in `config/universe.yaml → n8n_workflow_ids`, which is how
+   `/costs/harvest` attributes each sub-execution's LLM calls to an agent.
+4. Run it with **Execute workflow**. It fans out over `watchlist` from `config/universe.yaml`
+   (35 names by default — trim it for a demo run; the list is read from the service at
+   `/runs/start`, so no workflow edit is needed).
 
 ### Technical Agent (`agents/technical.json`, Step 3)
 
@@ -40,7 +82,8 @@ only indicator values and short summaries (§2 guardrail).
 Output (§3.3 + §3.4 status):
 `{ ticker, as_of, indicators: {rsi_14, macd{…}, bbands{…}, atr_14}, signal, summary, status }`.
 
-Cost logging to the `costs` table is deferred to Step 8 (orchestrator).
+Cost logging happens at the orchestrator level: `/costs/harvest` reads this agent's LLM token
+usage out of n8n's execution API after the run (§9.4 — see *The n8n API key* above).
 
 ### Sentiment Agent (`agents/sentiment.json`, Step 5)
 
@@ -70,7 +113,7 @@ Output (§3.1 + §3.4 status):
 Three terminal states: `ok` with scores; `ok` with `n_articles: 0` and neutral
 scores when there is genuinely no recent coverage (§13 — never padded); and
 `degraded` (with a reason) when a source, the LLM boundary, or the `news` write
-fails. Cost logging is deferred to Step 8.
+fails. Cost logging happens at the orchestrator level (`/costs/harvest`, §9.4).
 
 ### Earnings Agent (`agents/earnings.json`, Step 6)
 
@@ -108,7 +151,8 @@ Output (§3.2 + §3.4 status):
 Three terminal states: `ok` with a classified disclosure; `ok` with
 `latest_disclosure: null` when the scrape is healthy but nothing matched the
 window (never padded); and `degraded` (with a reason) when the scrape, an LLM
-boundary, or the `earnings` write fails. Cost logging is deferred to Step 8.
+boundary, or the `earnings` write fails. Cost logging happens at the orchestrator
+level (`/costs/harvest`, §9.4).
 
 ### Risk Manager (`agents/risk_manager.json`, Step 7)
 
@@ -154,8 +198,9 @@ earnings{…}, technical{…}, status }`.
 Two terminal states: `ok` with all three passes populated and the clamped final;
 and `degraded` (final = safe `hold`, completed passes kept, missing passes null,
 `status: "degraded"`) when the context fetch fails or a pass fails validation
-twice. Cost logging and the `recommendations`-table write are deferred to Step 8
-(orchestrator).
+twice. The orchestrator persists this output to the `recommendations` table via
+`POST /recommendations/store`, and logs the three passes' LLM cost via
+`POST /costs/harvest` (§9.4).
 
 **Local verification** (Windows): pin a contrived input where one agent
 disagrees with the other two (e.g. the trio above — sentiment bullish, technical

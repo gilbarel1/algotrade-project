@@ -18,6 +18,8 @@ from routers import (
     report,
     validate,
     riskmanager,
+    runs,
+    costs,
 )
 
 app = FastAPI(
@@ -34,6 +36,8 @@ app.include_router(earnings.router)
 app.include_router(report.router)
 app.include_router(validate.router)
 app.include_router(riskmanager.router)
+app.include_router(runs.router)
+app.include_router(costs.router)
 
 
 @app.get("/health")

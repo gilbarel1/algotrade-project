@@ -132,6 +132,154 @@ def post(path, payload):
         return resp.status, json.loads(resp.read().decode("utf-8"))
 
 
+# A §6.3-shaped Risk Manager result, used to exercise /recommendations/store.
+_SAMPLE_RECOMMENDATION = {
+    "draft": {"recommendation": "long", "conviction": "high", "rationale": "smoke draft"},
+    "critique": {
+        "counter_recommendation": "hold",
+        "key_objections": ["smoke objection"],
+        "conviction_challenge": "high -> medium",
+    },
+    "final": {
+        "recommendation": "long",
+        "conviction": "medium",
+        "rationale": "smoke final",
+    },
+    "sentiment": {"llm_sentiment": -0.1, "model_sentiment": -0.05, "disagreement": 0.05,
+                  "summary": "smoke", "status": "ok"},
+    "earnings": {"is_earnings_window": False, "materiality": "low", "summary": "smoke",
+                 "status": "ok"},
+    "technical": {"signal": "bullish_momentum", "summary": "smoke", "status": "ok"},
+    "agent_status": {"sentiment": "ok", "earnings": "ok", "technical": "ok"},
+}
+
+
+def check_orchestration():
+    """Exercise the §6.1 orchestration writes end-to-end, then clean up after itself.
+
+    Runs the same four calls the orchestrator makes — /runs/start,
+    /recommendations/store, /costs/harvest, /runs/finish — and reads the rows back
+    out of DuckDB, so the tables (§4.2) are verified, not just the HTTP shapes. The
+    synthetic run is deleted at the end so it never pollutes `python -m ops.cost_report`.
+
+    /costs/harvest needs a live n8n plus N8N_API_KEY; without them it must *degrade*
+    (summary prefixed `degraded:`), never 500 — which is what this asserts.
+    """
+    failures = 0
+    run_id = None
+    try:
+        status, start = post("/runs/start", {"mode": "manual"})
+        run_id = start.get("run_id")
+        ok = (
+            status == 200
+            and isinstance(run_id, str)
+            and run_id.startswith("r_")
+            and isinstance(start.get("watchlist"), list)
+            and start.get("watchlist")
+            and all(k in start for k in ("window_minutes", "window_days", "lookback_days"))
+        )
+        if ok:
+            print(
+                f"OK   /runs/start -> {run_id} "
+                f"({len(start['watchlist'])} tickers, windows "
+                f"{start['window_minutes']}m/{start['window_days']}d/"
+                f"{start['lookback_days']}d)"
+            )
+        else:
+            print(f"FAIL /runs/start: status={status} body={start}")
+            return failures + 1
+
+        payload = dict(_SAMPLE_RECOMMENDATION, run_id=run_id, ticker="TEVA.TA")
+        status, body = post("/recommendations/store", payload)
+        if status == 200 and body.get("stored") == 1:
+            print("OK   /recommendations/store -> stored 1")
+        else:
+            print(f"FAIL /recommendations/store: status={status} body={body}")
+            failures += 1
+
+        status, harvest = post("/costs/harvest", {"run_id": run_id})
+        if status == 200 and all(
+            k in harvest for k in ("run_id", "rows", "calls", "summary")
+        ):
+            print(f"OK   /costs/harvest -> {harvest['summary']}")
+        else:
+            print(f"FAIL /costs/harvest: status={status} body={harvest}")
+            failures += 1
+
+        status, body = post(
+            "/runs/finish",
+            {
+                "run_id": run_id,
+                "status": "ok",
+                "report_path": "reports/1970-01-01/0000/report.pdf",
+            },
+        )
+        if status == 200 and not str(body.get("summary", "")).startswith("degraded"):
+            print(f"OK   /runs/finish -> {body['summary']}")
+        else:
+            print(f"FAIL /runs/finish: status={status} body={body}")
+            failures += 1
+
+        failures += _check_tables(run_id)
+    except Exception as exc:  # noqa: BLE001 - surface any transport error
+        print(f"FAIL orchestration endpoints: {exc}")
+        failures += 1
+    finally:
+        if run_id:
+            _cleanup(run_id)
+    return failures
+
+
+def _check_tables(run_id):
+    """The §4.2 rows the orchestrator is supposed to have written."""
+    try:
+        from data import cache  # local import: only needed for the DB assertions
+    except ImportError as exc:
+        print(f"SKIP table checks (run from quant_service/): {exc}")
+        return 0
+
+    failures = 0
+    con = cache.connect()
+    try:
+        row = con.execute(
+            "SELECT status, report_path, finished_at FROM runs WHERE run_id = ?",
+            [run_id],
+        ).fetchone()
+        if row and row[0] == "ok" and row[1] and row[2] is not None:
+            print(f"OK   runs row closed: status={row[0]} report_path={row[1]}")
+        else:
+            print(f"FAIL runs row not closed properly: {row}")
+            failures += 1
+
+        rec = con.execute(
+            "SELECT draft, critique, final, agent_status FROM recommendations "
+            "WHERE run_id = ? AND ticker = 'TEVA.TA'",
+            [run_id],
+        ).fetchone()
+        if rec and all(rec):
+            print("OK   recommendations row has draft, critique, final, agent_status")
+        else:
+            print(f"FAIL recommendations row incomplete: {rec}")
+            failures += 1
+    finally:
+        con.close()
+    return failures
+
+
+def _cleanup(run_id):
+    """Remove the synthetic smoke run so it never shows up in the cost report."""
+    try:
+        from data import cache
+    except ImportError:
+        return
+    con = cache.connect()
+    try:
+        for table in ("costs", "recommendations", "runs"):
+            con.execute(f"DELETE FROM {table} WHERE run_id = ?", [run_id])
+    finally:
+        con.close()
+
+
 def main():
     failures = 0
     for path, payload in CASES.items():
@@ -201,6 +349,9 @@ def main():
         else:
             print(f"FAIL /validate accepted malformed payload {payload}: {body}")
             failures += 1
+
+    # §6.1 orchestration writes (runs, recommendations, costs).
+    failures += check_orchestration()
 
     print("\n" + ("All endpoints OK." if failures == 0 else f"{failures} endpoint(s) FAILED."))
     sys.exit(1 if failures else 0)
