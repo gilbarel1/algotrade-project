@@ -95,7 +95,42 @@ record what was exercised in the step report.
 - Idempotency of ingestion/persistence (re-running a step must not duplicate rows
   unless the design says append).
 
-### 4. Scope and hygiene
+### 5. n8n workflow verification (only when connected to the n8n MCP server)
+
+Steps 3 and later add or modify n8n sub-workflows/orchestration. If this step
+touched n8n (not just the FastAPI quant service), check whether the n8n MCP
+server is currently connected — e.g. an `mcp__n8n-mcp__*` tool is available/callable
+in this session. If it is **not** connected, skip this section entirely and note
+in the step report that n8n workflow verification was skipped (not connected) —
+do not attempt to install, authenticate, or otherwise fix the MCP connection as
+part of a step review.
+
+If it **is** connected, verify the live workflow against the design, not just
+the exported JSON in the repo:
+
+- `search_workflows` / `get_workflow_details` to find the workflow this step
+  built or changed and confirm it exists in n8n (not only committed as a file).
+- `validate_workflow` on its current definition — zero errors before this step
+  can be considered done.
+- Node-by-node shape check against the step's `docs/design.md` section: correct
+  trigger/HTTP nodes, correct sub-workflow calls, no nodes doing ML/PDF work that
+  belongs in the quant service (guardrail: "No machine learning inside n8n").
+- `test_workflow` (or `execute_workflow` with a small/pinned input via
+  `prepare_test_pin_data`) on at least one realistic case for this step's scope,
+  and inspect the execution with `get_execution` — confirm output shape matches
+  the relevant §3/§6 contract and that a deliberately-bad input (malformed
+  upstream response, bogus ticker) degrades per the guardrails rather than
+  crashing or fabricating output.
+- Note any credentials the workflow needs (`list_credentials`) that aren't yet
+  configured — that's a manual action per prime directive 5: stop and ask rather
+  than proceeding.
+
+Record what was actually run against the live n8n instance (workflow name/ID,
+validation result, execution ID) in the step report's "How to verify" section —
+"n8n MCP connected: validated + test-executed workflow <name>" or "n8n MCP not
+connected: skipped, verify manually in the n8n UI."
+
+### 6. Scope and hygiene
 
 - The diff contains **only this step's scope** — no accidental work from a later
   step (prime directive 1) and no unrelated refactors.
