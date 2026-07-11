@@ -1,0 +1,21 @@
+{
+  "name": "algotrade-project",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dev runner for the TA-35 multi-agent system: quant service (FastAPI) + n8n, one command.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "dev": "node scripts/dev.mjs",
+    "dev:service": "node scripts/dev.mjs --only=service",
+    "dev:n8n": "node scripts/dev.mjs --only=n8n",
+    "doctor": "node scripts/doctor.mjs",
+    "smoke": "node scripts/py.mjs smoke_test.py @service-url",
+    "db:init": "node scripts/py.mjs store_init.py",
+    "ingest": "node scripts/py.mjs -m data.ingest",
+    "costs": "node scripts/py.mjs -m ops.cost_report"
+  }
+}

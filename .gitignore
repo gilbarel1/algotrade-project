@@ -19,5 +19,11 @@ __pycache__/
 venv/
 .env.local
 
+# Node (dev runner — package.json has no dependencies, but npx/n8n write here)
+node_modules/
+package-lock.json
+.n8n/
+*.log
+
 # OS / editor
 .DS_Store
