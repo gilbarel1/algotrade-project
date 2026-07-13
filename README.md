@@ -267,6 +267,10 @@ Built and reviewed **one step at a time** (detail in `CLAUDE.md`).
 | 12 | README + supporting docs for a grader | ⬜ |
 | 13 | Chat assistant front end (bonus, §6.5) | ⬜ |
 
+**Future work (post-Step-13):** S&P 500 support — mixed TA-35 + S&P watchlist, SEC EDGAR
+earnings, per-market schedule gate. Approved plan:
+[`docs/sp500_integration_plan.md`](docs/sp500_integration_plan.md).
+
 ---
 
 ## Contributing
