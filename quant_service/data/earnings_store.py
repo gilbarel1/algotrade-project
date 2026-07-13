@@ -15,7 +15,7 @@ The §4.2 `earnings` schema is fixed:
 from __future__ import annotations
 
 import json
-from typing import List
+from typing import List, Optional
 
 import duckdb
 
@@ -63,3 +63,47 @@ def upsert_earnings(
         )
         written += 1
     return written
+
+
+def latest_for_symbol(con: duckdb.DuckDBPyConnection, symbol: str) -> Optional[dict]:
+    """Return the newest stored disclosure for a symbol, or None (§8.1 report enrichment).
+
+    Used by the PDF renderer to show the Earnings panel (disclosure title, Maya
+    link, and the extracted figures with their confidence markers). `extracted`
+    is parsed back from JSON into a dict; a row with no/invalid `extracted`
+    yields ``None`` for that field rather than raising.
+    """
+    row = con.execute(
+        """
+        SELECT id, symbol, published_at, language, title, url, kind,
+               materiality, summary, extracted
+        FROM earnings WHERE symbol = ?
+        ORDER BY published_at DESC NULLS LAST
+        LIMIT 1
+        """,
+        [symbol],
+    ).fetchone()
+    if row is None:
+        return None
+
+    extracted_raw = row[9]
+    extracted = None
+    if extracted_raw:
+        try:
+            extracted = json.loads(extracted_raw)
+        except (TypeError, ValueError):
+            extracted = None
+
+    published_at = row[2]
+    return {
+        "id": row[0],
+        "symbol": row[1],
+        "published_at": published_at.isoformat() if published_at is not None else None,
+        "language": row[3],
+        "title": row[4],
+        "url": row[5],
+        "kind": row[6],
+        "materiality": row[7],
+        "summary": row[8],
+        "extracted": extracted,
+    }

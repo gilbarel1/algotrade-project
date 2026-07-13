@@ -1,9 +1,9 @@
-{# Report template skeleton (§8.1). Block placeholders only — filled in Step 9. #}
+{# TA-35 investment report (§8.1). Rendered by pdf/render.py with WeasyPrint. #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>TA-35 Investment Report — {{ run_id | default("run_id") }}</title>
+  <title>TA-35 Investment Report — {{ run_id }}</title>
   <link rel="stylesheet" href="report.css">
 </head>
 <body>
@@ -11,48 +11,162 @@
   {# 1. Header — run id, timestamp (Asia/Jerusalem), watchlist, mode #}
   <header class="report-header">
     <h1>TA-35 Investment Recommendation Report</h1>
-    <!-- TODO Step 9: run_id, timestamp (Asia/Jerusalem), watchlist, mode -->
+    <table class="meta">
+      <tr><th>Run</th><td>{{ header.run_id }}</td>
+          <th>Generated</th><td>{{ header.generated_at }}</td></tr>
+      <tr><th>Mode</th><td>{{ header.mode }}</td>
+          <th>Watchlist</th><td>{{ header.n_tickers }} ticker(s): {{ header.watchlist | join(", ") }}</td></tr>
+    </table>
   </header>
 
   {# 2. Executive summary — counts + top three highest-conviction calls #}
   <section class="exec-summary">
     <h2>Executive Summary</h2>
-    <!-- TODO Step 9: long/short/hold/avoid counts; top 3 calls with one-line rationales -->
+    {% if exec.counts %}
+    <ul class="counts">
+      {% for call in ["long", "short", "hold", "avoid"] %}
+        {% if exec.counts.get(call) %}<li><span class="badge {{ call }}">{{ call }}</span> {{ exec.counts[call] }}</li>{% endif %}
+      {% endfor %}
+      {% for call, n in exec.counts.items() if call not in ["long","short","hold","avoid"] %}
+        <li><span class="badge unknown">{{ call }}</span> {{ n }}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">No recommendations in this run.</p>
+    {% endif %}
+
+    {% if exec.top3 %}
+    <h3>Highest-conviction calls</h3>
+    <ol class="top-calls">
+      {% for c in exec.top3 %}
+      <li><strong>{{ c.ticker }}</strong>
+        <span class="badge {{ c.recommendation }}">{{ c.recommendation }}</span>
+        <span class="conviction {{ c.conviction }}">{{ c.conviction }}</span>
+        — <span class="rationale" style="unicode-bidi: plaintext;">{{ c.rationale }}</span></li>
+      {% endfor %}
+    </ol>
+    {% endif %}
   </section>
 
   {# 3. Per-ticker section — one page per ticker #}
-  {% for rec in recommendations | default([]) %}
-  <section class="ticker-page">
-    <h2>{{ rec.ticker | default("TICKER") }}</h2>
-
-    {# Recommendation badge + conviction #}
-    <!-- TODO Step 9: recommendation badge, conviction -->
+  {% for rec in recommendations %}
+  <section class="ticker-page{% if rec.status == 'degraded' %} degraded{% endif %}">
+    <div class="ticker-head">
+      <h2 style="unicode-bidi: plaintext;">{{ rec.ticker }}</h2>
+      {% if rec.final %}
+        <span class="badge big {{ rec.final.recommendation }}">{{ rec.final.recommendation }}</span>
+        <span class="conviction big {{ rec.final.conviction }}">{{ rec.final.conviction }} conviction</span>
+      {% else %}
+        <span class="badge big unknown">no call</span>
+      {% endif %}
+      {% if rec.status == 'degraded' %}<span class="degraded-flag">DEGRADED</span>{% endif %}
+    </div>
 
     {# Three agent panels #}
     <div class="agent-panels">
+
       <div class="panel sentiment">
         <h3>Sentiment</h3>
-        <!-- TODO Step 9: both scores side-by-side, disagreement, top articles + citations -->
+        <table class="scores">
+          <tr><th>LLM</th><td>{{ "%.2f"|format(rec.sentiment.llm_sentiment) if rec.sentiment.llm_sentiment is not none else "—" }}</td></tr>
+          <tr><th>Model</th><td>{{ "%.2f"|format(rec.sentiment.model_sentiment) if rec.sentiment.model_sentiment is not none else "—" }}</td></tr>
+          <tr class="{% if rec.sentiment.disagree_high %}disagree-high{% endif %}">
+            <th>Disagreement</th>
+            <td>{{ "%.2f"|format(rec.sentiment.disagreement) if rec.sentiment.disagreement is not none else "—" }}{% if rec.sentiment.disagree_high %} ⚠ split{% endif %}</td></tr>
+        </table>
+        {% if rec.sentiment.summary %}<p class="panel-summary" style="unicode-bidi: plaintext;">{{ rec.sentiment.summary }}</p>{% endif %}
+        {% if rec.citations %}
+        <ul class="citations">
+          {% for cite in rec.citations %}
+          <li lang="{{ cite.language }}" style="unicode-bidi: plaintext;">
+            {% if cite.language == 'he' %}<span class="lang-tag">HE</span> {% endif %}
+            <a href="{{ cite.url }}">{{ cite.headline }}</a>
+            <span class="src">— {{ cite.source }}</span>
+            <span class="mini-scores">L {{ "%.2f"|format(cite.llm_score) if cite.llm_score is not none else "—" }} / M {{ "%.2f"|format(cite.model_score) if cite.model_score is not none else "—" }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}<p class="muted">No scored articles.</p>{% endif %}
       </div>
+
       <div class="panel earnings">
         <h3>Earnings</h3>
-        <!-- TODO Step 9: disclosure title, Maya link, figures with confidence markers (ambiguous distinct) -->
+        <p class="tags">
+          <span class="tag">{{ "in window" if rec.earnings_panel.is_window else "no window" }}</span>
+          {% if rec.earnings_panel.materiality %}<span class="tag">materiality: {{ rec.earnings_panel.materiality }}</span>{% endif %}
+        </p>
+        {% if rec.earnings_panel.summary %}<p class="panel-summary" style="unicode-bidi: plaintext;">{{ rec.earnings_panel.summary }}</p>{% endif %}
+        {% if rec.disclosure %}
+        <p class="disclosure-title" lang="{{ rec.disclosure.language }}" style="unicode-bidi: plaintext;">
+          {% if rec.disclosure.language == 'he' %}<span class="lang-tag">HE</span> {% endif %}
+          <a href="{{ rec.disclosure.url }}">{{ rec.disclosure.title }}</a>
+        </p>
+        {% if rec.disclosure.figures %}
+        <table class="figures">
+          <tr><th>Figure</th><th>Value</th><th>Confidence</th></tr>
+          {% for f in rec.disclosure.figures %}
+          <tr class="{% if f.ambiguous %}ambiguous{% endif %}">
+            <td>{{ f.name }}</td>
+            <td style="unicode-bidi: plaintext;">{{ "ambiguous" if f.ambiguous else f.value }}</td>
+            <td>{% if f.ambiguous %}<span class="amb-mark">ambiguous</span>{% else %}<span class="conf-badge">×{{ f.confidence }}</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </table>
+        <p class="figure-note">Figures are committed only when ≥2 of 3 self-consistency samples agree; otherwise shown as <em>ambiguous</em> — never invented (§3.2).</p>
+        {% endif %}
+        {% else %}<p class="muted">No recent disclosure.</p>{% endif %}
       </div>
+
       <div class="panel technical">
         <h3>Technical</h3>
-        <!-- TODO Step 9: indicator snapshot + signal -->
+        {% if rec.technical_panel.signal %}<p><span class="tag signal">{{ rec.technical_panel.signal }}</span></p>{% endif %}
+        {% if rec.indicators %}
+        <table class="indicators">
+          <tr><th>RSI(14)</th><td>{{ rec.indicators.rsi_14 if rec.indicators.rsi_14 is not none else "—" }}</td></tr>
+          {% if rec.indicators.macd %}<tr><th>MACD</th><td>{{ rec.indicators.macd.macd }} / sig {{ rec.indicators.macd.signal }} / hist {{ rec.indicators.macd.hist }}</td></tr>{% endif %}
+          {% if rec.indicators.bbands %}<tr><th>Bollinger %B</th><td>{{ rec.indicators.bbands.pct_b if rec.indicators.bbands.pct_b is not none else "—" }}</td></tr>{% endif %}
+          <tr><th>ATR(14)</th><td>{{ rec.indicators.atr_14 if rec.indicators.atr_14 is not none else "—" }}</td></tr>
+        </table>
+        {% else %}<p class="muted">Indicators unavailable.</p>{% endif %}
+        {% if rec.technical_panel.summary %}<p class="panel-summary">{{ rec.technical_panel.summary }}</p>{% endif %}
       </div>
     </div>
 
     {# Reasoning trace — draft / critique / final (headline differentiator) #}
     <div class="reasoning-trace">
       <h3>Reasoning Trace</h3>
-      <!-- TODO Step 9: draft, critique objections, final decision -->
+      <div class="pass draft">
+        <h4>1 · Draft</h4>
+        {% if rec.draft %}
+          <p><span class="badge {{ rec.draft.recommendation }}">{{ rec.draft.recommendation }}</span>
+             <span class="conviction {{ rec.draft.conviction }}">{{ rec.draft.conviction }}</span></p>
+          <p class="rationale" style="unicode-bidi: plaintext;">{{ rec.draft.rationale }}</p>
+        {% else %}<p class="muted">Draft unavailable.</p>{% endif %}
+      </div>
+      <div class="pass critique">
+        <h4>2 · Devil's-advocate critique</h4>
+        {% if rec.critique %}
+          <p>Counter: <span class="badge {{ rec.critique.counter_recommendation }}">{{ rec.critique.counter_recommendation }}</span>
+             — <em>{{ rec.critique.conviction_challenge }}</em></p>
+          <ul class="objections">
+            {% for obj in rec.critique.key_objections %}<li style="unicode-bidi: plaintext;">{{ obj }}</li>{% endfor %}
+          </ul>
+        {% else %}<p class="muted">Critique unavailable.</p>{% endif %}
+      </div>
+      <div class="pass final">
+        <h4>3 · Final decision</h4>
+        {% if rec.final %}
+          <p><span class="badge {{ rec.final.recommendation }}">{{ rec.final.recommendation }}</span>
+             <span class="conviction {{ rec.final.conviction }}">{{ rec.final.conviction }}</span></p>
+          <p class="rationale" style="unicode-bidi: plaintext;">{{ rec.final.rationale }}</p>
+        {% else %}<p class="muted">Final unavailable.</p>{% endif %}
+      </div>
     </div>
 
     {# Price chart thumbnail — 90-day close + 20/50-day MAs #}
     <div class="price-chart">
-      <!-- TODO Step 9: PNG thumbnail from quant service -->
+      {% if rec.chart_uri %}<img src="{{ rec.chart_uri }}" alt="{{ rec.ticker }} price chart">
+      {% else %}<p class="muted">Chart unavailable.</p>{% endif %}
     </div>
   </section>
   {% endfor %}
@@ -60,7 +174,9 @@
   {# 4. Methodology footer #}
   <footer class="methodology">
     <h2>Methodology</h2>
-    <!-- TODO Step 9: decision rubric, dual-sentiment threshold, critique-loop description -->
+    <p><strong>Agreement rubric.</strong> Each agent's direction is mapped bullish/bearish/neutral; conviction follows the count that agree with the call — 3 of 3 → high, 2 of 3 → medium, ≤1 → hold. <code>short</code> requires a strong bearish signal; <code>avoid</code> is reserved for ≥2 degraded agents.</p>
+    <p><strong>Conviction caps.</strong> A high-materiality earnings event in-window, or a dual-sentiment split above the threshold ({{ "%.2f"|format(methodology.disagreement_threshold) }}), or any degraded agent caps conviction at medium.</p>
+    <p><strong>Critique loop.</strong> Every call is a three-pass Risk Manager sequence — draft → devil's-advocate critique → final — shown in full above so the reasoning is auditable.</p>
     <p class="disclaimer">
       This report is educational and not investment advice.
     </p>

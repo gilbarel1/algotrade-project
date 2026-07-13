@@ -72,3 +72,45 @@ def upsert_news(con: duckdb.DuckDBPyConnection, symbol: str, rows: List[dict]) -
         )
         written += 1
     return written
+
+
+def top_scored(con: duckdb.DuckDBPyConnection, symbol: str, limit: int = 5) -> List[dict]:
+    """Return a symbol's most salient scored articles for the report (§8.1).
+
+    Used by the PDF renderer's Sentiment panel citation block. "Salient" =
+    strongest signal first: ordered by the larger absolute of the two stored
+    scores (LLM / model), then most recent. Returns compact citation rows
+    (headline, url, source, language, both scores) — never article bodies.
+    """
+    rows = con.execute(
+        """
+        SELECT headline, url, source, language,
+               llm_sentiment, model_sentiment, disagreement, published_at
+        FROM news WHERE symbol = ?
+        ORDER BY GREATEST(
+                     COALESCE(ABS(llm_sentiment), 0),
+                     COALESCE(ABS(model_sentiment), 0)
+                 ) DESC,
+                 published_at DESC NULLS LAST
+        LIMIT ?
+        """,
+        [symbol, limit],
+    ).fetchall()
+    out: List[dict] = []
+    for r in rows:
+        published_at = r[7]
+        out.append(
+            {
+                "headline": r[0],
+                "url": r[1],
+                "source": r[2],
+                "language": r[3],
+                "llm_score": r[4],
+                "model_score": r[5],
+                "disagreement": r[6],
+                "published_at": published_at.isoformat()
+                if published_at is not None
+                else None,
+            }
+        )
+    return out

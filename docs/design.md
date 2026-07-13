@@ -396,6 +396,13 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
 { "run_id":"r_2026-06-22T13:00", "recommendations":[ /* per-ticker, see §6.3 */ ],
   "summary":"3 long, 1 hold, 1 avoid." }
 { "run_id":"r_2026-06-22T13:00", "pdf_path":"reports/2026-06-22/1300/report.pdf" }
+// The §8.1 rich blocks (news citations, Maya disclosure + figures, indicator
+// snapshot, price chart) are enriched server-side from the `news`/`earnings`
+// tables and the `prices` cache — the §6.3 payload carries only the condensed
+// panels (§2 heavy-data-stays-server-side). Rendering degrades, never 500s:
+// { "run_id":…, "pdf_path": null, "summary":"degraded: <reason>" } (the
+// orchestrator maps a null pdf_path to run status "error"). Needs the GTK
+// runtime for WeasyPrint (§11.1).
 
 // POST /validate
 { "agent":"technical", "payload":{"signal":"bullish_momentum","summary":"Momentum building."} }

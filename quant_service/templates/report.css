@@ -1,1 +1,131 @@
-/* Report stylesheet (§8.2). Placeholder — real print styling lands in Step 9. */
+/* TA-35 report print stylesheet (§8.1, §8.2). Consumed by WeasyPrint. */
+
+@page {
+  size: A4;
+  margin: 1.4cm 1.3cm;
+  @bottom-center {
+    content: "TA-35 Investment Report — educational, not investment advice — page " counter(page) " / " counter(pages);
+    font-size: 7pt;
+    color: #888;
+  }
+}
+
+body {
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 9pt;
+  color: #1a1a1a;
+  line-height: 1.35;
+}
+
+h1 { font-size: 17pt; margin: 0 0 6pt; }
+h2 { font-size: 13pt; margin: 0 0 6pt; border-bottom: 1.5pt solid #333; padding-bottom: 2pt; }
+h3 { font-size: 10pt; margin: 0 0 4pt; color: #333; }
+h4 { font-size: 9pt; margin: 0 0 3pt; color: #555; }
+a { color: #1f5fa8; text-decoration: none; }
+.muted { color: #999; font-style: italic; font-size: 8pt; }
+
+/* --- Header ------------------------------------------------------------- */
+.report-header { margin-bottom: 10pt; }
+table.meta { width: 100%; border-collapse: collapse; font-size: 8.5pt; margin-top: 4pt; }
+table.meta th { text-align: left; color: #666; font-weight: 600; padding: 1pt 6pt 1pt 0; width: 12%; }
+table.meta td { padding: 1pt 10pt 1pt 0; }
+
+/* --- Executive summary -------------------------------------------------- */
+.exec-summary { margin-bottom: 12pt; }
+ul.counts { list-style: none; padding: 0; margin: 4pt 0; }
+ul.counts li { display: inline-block; margin-right: 12pt; font-size: 10pt; }
+ol.top-calls { margin: 4pt 0 0; padding-left: 16pt; }
+ol.top-calls li { margin-bottom: 2pt; }
+.rationale { color: #333; }
+
+/* --- Badges & conviction ------------------------------------------------ */
+.badge {
+  display: inline-block; padding: 0.5pt 5pt; border-radius: 3pt;
+  font-size: 7.5pt; font-weight: 700; text-transform: uppercase;
+  color: #fff; letter-spacing: 0.3pt;
+}
+.badge.big { font-size: 9pt; padding: 1.5pt 8pt; }
+.badge.long   { background: #1e8e4f; }
+.badge.short  { background: #c0392b; }
+.badge.hold   { background: #b7791f; }
+.badge.avoid  { background: #6b7280; }
+.badge.bullish { background: #1e8e4f; }
+.badge.bearish { background: #c0392b; }
+.badge.unknown, .badge.neutral { background: #9aa0a6; }
+
+.conviction { font-size: 8pt; font-weight: 600; color: #555; }
+.conviction.big { font-size: 9pt; }
+.conviction.high { color: #1e8e4f; }
+.conviction.medium { color: #b7791f; }
+.conviction.low { color: #c0392b; }
+
+/* --- Per-ticker page ---------------------------------------------------- */
+.ticker-page { page-break-before: always; page-break-inside: auto; }
+.ticker-page:first-of-type { page-break-before: auto; }
+.ticker-head { display: flex; align-items: baseline; gap: 8pt; margin-bottom: 8pt; }
+.ticker-head h2 { border: 0; margin: 0; padding: 0; flex: 0 0 auto; }
+.ticker-page.degraded .ticker-head { color: #92400e; }
+.degraded-flag {
+  background: #fde68a; color: #92400e; font-size: 7pt; font-weight: 700;
+  padding: 0.5pt 5pt; border-radius: 3pt;
+}
+
+/* --- Agent panels ------------------------------------------------------- */
+.agent-panels { display: flex; gap: 8pt; margin-bottom: 10pt; }
+.panel {
+  flex: 1; border: 0.75pt solid #ddd; border-radius: 4pt; padding: 6pt 7pt;
+  background: #fafafa; page-break-inside: avoid;
+}
+.panel h3 { border-bottom: 0.5pt solid #e2e2e2; padding-bottom: 2pt; }
+.panel-summary { font-size: 8pt; color: #444; margin: 4pt 0 2pt; }
+
+table.scores, table.indicators, table.figures { width: 100%; border-collapse: collapse; font-size: 8pt; }
+table.scores th, table.indicators th { text-align: left; color: #666; font-weight: 600; padding: 1pt 4pt 1pt 0; }
+table.scores td, table.indicators td { text-align: right; padding: 1pt 0; }
+tr.disagree-high td, tr.disagree-high th { color: #c0392b; font-weight: 700; }
+
+ul.citations { list-style: none; padding: 0; margin: 4pt 0 0; font-size: 7.5pt; }
+ul.citations li { margin-bottom: 2.5pt; padding-bottom: 2pt; border-bottom: 0.25pt dotted #e0e0e0; }
+.src { color: #888; }
+.mini-scores { color: #aaa; font-size: 7pt; }
+.lang-tag {
+  background: #e0e7ff; color: #3730a3; font-size: 6.5pt; font-weight: 700;
+  padding: 0 3pt; border-radius: 2pt;
+}
+
+.tags { margin: 2pt 0; }
+.tag {
+  display: inline-block; background: #eef2f7; color: #334; font-size: 7.5pt;
+  padding: 0.5pt 5pt; border-radius: 3pt; margin-right: 4pt;
+}
+.tag.signal { background: #dcefe4; color: #1e5c38; }
+
+/* Earnings figures — ambiguous visually distinct (§8.1) */
+table.figures { margin-top: 4pt; }
+table.figures th { text-align: left; background: #f0f0f0; padding: 1.5pt 4pt; font-size: 7.5pt; }
+table.figures td { padding: 1.5pt 4pt; border-bottom: 0.25pt solid #eee; }
+tr.ambiguous td { color: #9a6a00; background: #fffbeb; font-style: italic; }
+.conf-badge { background: #1e8e4f; color: #fff; font-size: 7pt; font-weight: 700; padding: 0 4pt; border-radius: 2pt; }
+.amb-mark { color: #b45309; font-size: 7pt; font-weight: 700; }
+.figure-note { font-size: 7pt; color: #999; margin: 3pt 0 0; }
+
+/* --- Reasoning trace (headline differentiator) -------------------------- */
+.reasoning-trace {
+  border: 0.75pt solid #cbd5e1; border-radius: 4pt; padding: 7pt 9pt;
+  margin-bottom: 10pt; background: #f8fafc; page-break-inside: avoid;
+}
+.reasoning-trace .pass { margin-bottom: 6pt; padding-left: 8pt; border-left: 2pt solid #cbd5e1; }
+.reasoning-trace .pass.draft   { border-left-color: #93c5fd; }
+.reasoning-trace .pass.critique { border-left-color: #fca5a5; }
+.reasoning-trace .pass.final   { border-left-color: #6ee7b7; }
+ul.objections { margin: 2pt 0; padding-left: 14pt; font-size: 8pt; }
+
+/* --- Price chart -------------------------------------------------------- */
+.price-chart { text-align: center; page-break-inside: avoid; }
+.price-chart img { max-width: 100%; height: auto; }
+
+/* --- Methodology footer ------------------------------------------------- */
+.methodology { margin-top: 14pt; border-top: 1.5pt solid #333; padding-top: 6pt; font-size: 8pt; color: #444; }
+.methodology h2 { font-size: 11pt; }
+.methodology code { background: #eee; padding: 0 3pt; border-radius: 2pt; font-size: 7.5pt; }
+.disclaimer { margin-top: 6pt; font-style: italic; color: #666; font-size: 8pt; }

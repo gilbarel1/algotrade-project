@@ -48,9 +48,10 @@ Two layers joined by one HTTP boundary (§2 of the design):
   libraries, so all heavy data and computation stay server-side; only short text and scores
   cross the LLM boundary.
 
-**Where the build stands:** Steps 0–8 are done — the full team runs end-to-end and persists
-its results. The PDF report (`/report`) is still a contract-shaped stub. See the
-[roadmap](#build-roadmap).
+**Where the build stands:** Steps 0–9 are done — the full team runs end-to-end, persists its
+results, and renders the **PDF report** (`/report`): per-ticker pages with the dual-sentiment
+panel, the three-pass reasoning trace, earnings figures with confidence markers, news
+citations, a price chart, and a methodology footer. See the [roadmap](#build-roadmap).
 
 ---
 
@@ -261,7 +262,7 @@ Built and reviewed **one step at a time** (detail in `CLAUDE.md`).
 | 6 | Earnings Agent (Maya scraping + self-consistency number extraction) | ✅ done |
 | 7 | Risk Manager three-stage critique loop | ✅ done |
 | 8 | Orchestrator fan-out + cost logging | ✅ done |
-| 9 | `/report` real (WeasyPrint + Jinja2) | ⬜ |
+| 9 | `/report` real (WeasyPrint + Jinja2) | ✅ done |
 | 10 | Schedule trigger gated by TASE hours | ⬜ |
 | 11 | Evaluation harness (`python -m eval.run`) | ⬜ |
 | 12 | README + supporting docs for a grader | ⬜ |
@@ -369,6 +370,12 @@ instance must have been started with the two variables above.
   Python `duckdb` that wrote it (`python -c "import duckdb; print(duckdb.__version__)"`).
 - **Maya scrape is TTL-cached** for 10 minutes, so an orchestrator run scrapes once, not once
   per ticker.
-- **`WeasyPrint` on Windows (Step 9)** needs the GTK runtime; specifics when that step lands.
+- **`WeasyPrint` on Windows (Step 9) needs the GTK3 runtime.** `pip install weasyprint`
+  provides the Python package but not its native libraries, so the first render (or
+  `import weasyprint`) fails with `cannot load library 'libgobject-2.0-0.dll'`. Install the
+  **GTK3 runtime** once — the [tschoonj GTK-for-Windows installer](https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer/releases)
+  (`gtk3-runtime-*-win64.exe`), keeping the "add to PATH" option — then restart the shell.
+  `/report` itself never crashes without it: it degrades to `{pdf_path: null, summary:
+  "degraded: …"}` and the run is marked `error`.
 
 </details>
