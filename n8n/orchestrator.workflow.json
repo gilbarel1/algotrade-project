@@ -7,7 +7,81 @@
       "name": "Manual Trigger",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [0, 384]
+      "position": [-224, 260]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Manual runs are always mode 'manual' (§6.1, §6.5) and bypass the TASE-hours\n// gate - the demo must run on demand regardless of the clock.\nreturn [{ json: { mode: 'manual' } }];"
+      },
+      "id": "code-set-mode-manual",
+      "name": "Set Mode (Manual)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [0, 260]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "0 0 10-17 * * 0-4" }
+          ]
+        }
+      },
+      "id": "trigger-schedule",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-672, 620]
+    },
+    {
+      "parameters": {
+        "jsCode": "// TASE trading-hours gate (§6.1, §11.2). Sun-Thu, 09:30-17:30 Asia/Jerusalem.\n// The schedule_cron (config/universe.yaml §4.4) already fires only Sun-Thu\n// 10:00-17:00 local, but this is an INDEPENDENT in-workflow check so a stray\n// out-of-hours fire exits cleanly with NO runs row written (§11.2). It sits\n// before /runs/start, which is the only thing that mints a runs row.\n//\n// DEV OVERRIDE (not in the design; test-only): if $env.TASE_GATE_FAKE_NOW holds\n// an ISO timestamp, the gate evaluates that instant instead of the real clock so\n// the outside-hours branch is deterministically verifiable. MUST be unset in\n// production.\nconst fake = ($env.TASE_GATE_FAKE_NOW || '').trim();\nconst now = fake ? new Date(fake) : new Date();\nif (isNaN(now.getTime())) {\n  throw new Error('TASE_GATE_FAKE_NOW is set but not a valid ISO timestamp: ' + fake);\n}\n\n// Wall-clock parts in Asia/Jerusalem, independent of the server's own timezone\n// (§11.2: render Asia/Jerusalem). hourCycle h23 keeps midnight as 00, not 24.\nconst parts = new Intl.DateTimeFormat('en-GB', {\n  timeZone: 'Asia/Jerusalem',\n  weekday: 'short',\n  hour: '2-digit',\n  minute: '2-digit',\n  hourCycle: 'h23',\n}).formatToParts(now);\nconst get = (t) => (parts.find((p) => p.type === t) || {}).value;\nconst weekday = get('weekday');\nconst hh = get('hour');\nconst mm = get('minute');\nconst minutes = parseInt(hh, 10) * 60 + parseInt(mm, 10);\n\nconst OPEN = 9 * 60 + 30;   // 09:30\nconst CLOSE = 17 * 60 + 30; // 17:30\nconst tradingDay = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu'].includes(weekday);\nconst within_tase_hours = tradingDay && minutes >= OPEN && minutes <= CLOSE;\n\nreturn [{\n  json: {\n    within_tase_hours,\n    checked_at_il: weekday + ' ' + hh + ':' + mm + ' Asia/Jerusalem',\n    fake_now: fake || null,\n  },\n}];"
+      },
+      "id": "code-tase-gate",
+      "name": "TASE Hours Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-448, 620]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-within-hours",
+              "leftValue": "={{ $json.within_tase_hours }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-within-hours",
+      "name": "If Within Hours",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [-224, 620]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Scheduled runs inside TASE hours are mode 'scheduled' (§6.1, §6.5).\nreturn [{ json: { mode: 'scheduled' } }];"
+      },
+      "id": "code-set-mode-scheduled",
+      "name": "Set Mode (Scheduled)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [0, 500]
+    },
+    {
+      "parameters": {},
+      "id": "noop-skip",
+      "name": "Skip (Outside TASE Hours)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [0, 760]
     },
     {
       "parameters": {
@@ -15,7 +89,7 @@
         "url": "={{ $env.QUANT_SERVICE_URL }}/runs/start",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ mode: 'manual' }) }}",
+        "jsonBody": "={{ JSON.stringify({ mode: $json.mode }) }}",
         "options": {}
       },
       "id": "http-runs-start",
@@ -337,6 +411,24 @@
   ],
   "connections": {
     "Manual Trigger": {
+      "main": [[{ "node": "Set Mode (Manual)", "type": "main", "index": 0 }]]
+    },
+    "Set Mode (Manual)": {
+      "main": [[{ "node": "Start Run", "type": "main", "index": 0 }]]
+    },
+    "Schedule Trigger": {
+      "main": [[{ "node": "TASE Hours Gate", "type": "main", "index": 0 }]]
+    },
+    "TASE Hours Gate": {
+      "main": [[{ "node": "If Within Hours", "type": "main", "index": 0 }]]
+    },
+    "If Within Hours": {
+      "main": [
+        [{ "node": "Set Mode (Scheduled)", "type": "main", "index": 0 }],
+        [{ "node": "Skip (Outside TASE Hours)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Set Mode (Scheduled)": {
       "main": [[{ "node": "Start Run", "type": "main", "index": 0 }]]
     },
     "Start Run": {

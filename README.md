@@ -48,10 +48,12 @@ Two layers joined by one HTTP boundary (§2 of the design):
   libraries, so all heavy data and computation stay server-side; only short text and scores
   cross the LLM boundary.
 
-**Where the build stands:** Steps 0–9 are done — the full team runs end-to-end, persists its
+**Where the build stands:** Steps 0–10 are done — the full team runs end-to-end, persists its
 results, and renders the **PDF report** (`/report`): per-ticker pages with the dual-sentiment
 panel, the three-pass reasoning trace, earnings figures with confidence markers, news
-citations, a price chart, and a methodology footer. See the [roadmap](#build-roadmap).
+citations, a price chart, and a methodology footer. The orchestrator also runs on a
+**TASE-hours schedule** (Sun–Thu, gated to 09:30–17:30 Asia/Jerusalem) alongside the manual
+trigger. See the [roadmap](#build-roadmap).
 
 ---
 
@@ -170,6 +172,39 @@ To run a **single agent** standalone, pin mock input on its Execute Workflow Tri
 Widen the windows as shown: the 2-hour news and 5-day earnings defaults are often legitimately
 empty, which looks like a bug but isn't.
 
+### 7. Scheduled runs (TASE hours)
+
+The orchestrator also carries a **Schedule Trigger** (`schedule_cron` from `config/universe.yaml`,
+`0 10-17 * * 0-4` — hourly, Sun–Thu 10:00–17:00). For the cron to fire on *local* time you must set
+**`GENERIC_TIMEZONE=Asia/Jerusalem`** in n8n's environment — n8n evaluates Schedule Trigger crons in
+`GENERIC_TIMEZONE`, **not** `TZ`; left unset it defaults to `America/New_York` and the schedule
+fires at the wrong hours (this is a common n8n footgun). Keep `TZ=Asia/Jerusalem` as well (OS clock).
+The workflow must also be **Published/Active** (in n8n 2.x the *Publish* button top-right; older
+builds have an Active toggle) — inactive workflows never fire on schedule. n8n does **not** backfill
+missed cron ticks, so if the process isn't running at the exact top of the hour that fire is skipped.
+The Manual Trigger is unaffected and always runs.
+
+Every scheduled fire passes through an in-workflow **TASE Hours Gate** (Sun–Thu, 09:30–17:30
+Asia/Jerusalem) that sits *before* `/runs/start`. Outside those hours it exits at a No-Op with
+**no `runs` row written** (§11.2); the manual path bypasses the gate. Scheduled runs are recorded
+with `mode: "scheduled"`; manual runs with `mode: "manual"`.
+
+**Testing the gate deterministically** (the gate reads the real clock, so you can't force
+off-hours on demand): set `TASE_GATE_FAKE_NOW` in n8n's env to an ISO timestamp and the gate
+evaluates *that* instant instead. **This is a dev-only override — leave it unset in production.**
+
+```bash
+# Outside hours → gate false, ends at the No-Op, runs count unchanged, no report
+TASE_GATE_FAKE_NOW=2026-07-17T12:00:00+03:00   # a Friday
+
+# Inside hours → full pipeline, new runs row with mode "scheduled"
+TASE_GATE_FAKE_NOW=2026-07-15T11:00:00+03:00   # a Wednesday midday
+```
+
+Execute the **Schedule Trigger** node (n8n's "Execute step") after setting the var and restarting
+n8n; confirm the `runs` count in `quant_service/store.duckdb` is unchanged for the Friday case and
+grows by one (with `mode='scheduled'`) for the Wednesday case.
+
 ---
 
 ## Everyday commands
@@ -263,7 +298,7 @@ Built and reviewed **one step at a time** (detail in `CLAUDE.md`).
 | 7 | Risk Manager three-stage critique loop | ✅ done |
 | 8 | Orchestrator fan-out + cost logging | ✅ done |
 | 9 | `/report` real (WeasyPrint + Jinja2) | ✅ done |
-| 10 | Schedule trigger gated by TASE hours | ⬜ |
+| 10 | Schedule trigger gated by TASE hours | ✅ done |
 | 11 | Evaluation harness (`python -m eval.run`) | ⬜ |
 | 12 | README + supporting docs for a grader | ⬜ |
 | 13 | Chat assistant front end (bonus, §6.5) | ⬜ |

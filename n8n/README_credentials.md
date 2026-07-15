@@ -69,6 +69,20 @@ service over HTTP — but it calls the four agents **by workflow id**:
    (35 names by default — trim it for a demo run; the list is read from the service at
    `/runs/start`, so no workflow edit is needed).
 
+**Re-importing after Step 10:** if the orchestrator already exists in your instance, don't
+create a second copy — open the existing workflow and re-import over it (or paste the new
+nodes) so the id in `n8n_workflow_ids` stays valid. Step 10 added a **Schedule Trigger** and a
+**TASE Hours Gate** on a second entry path; the agent-id wiring (step 2 above) is unchanged.
+
+**Schedule Trigger (Step 10, §6.1/§11.2).** The scheduled path fires on `schedule_cron`
+(`0 10-17 * * 0-4`, hourly Sun–Thu 10:00–17:00). For it to fire at all: (a) set
+`TZ=Asia/Jerusalem` in n8n's env so the cron reads as local time, and (b) toggle the workflow
+**Active** — inactive workflows never run on schedule. Each fire passes an in-workflow gate
+(Sun–Thu 09:30–17:30 Asia/Jerusalem) *before* `/runs/start`; outside those hours it dead-ends at
+a No-Op with no `runs` row. The Manual Trigger bypasses the gate. To test the outside-hours branch
+without waiting for the weekend, set `TASE_GATE_FAKE_NOW` (ISO timestamp) in n8n's env — a
+**dev-only** override that pins the gate's clock; leave it unset in production. See README §7.
+
 ### Technical Agent (`agents/technical.json`, Step 3)
 
 Input: `{ "ticker": "TEVA.TA", "lookback_days": 180, "run_id": "r_test" }`.
