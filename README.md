@@ -422,6 +422,12 @@ instance must have been started with the two variables above.
   classifies each and reports the most material. Ranking is *retrieval, not classification* — the
   score never becomes `kind`/`materiality`, so a mis-ranked candidate is just classified `other/low`
   and loses. Figures are extracted from the winner only: 3 classify + 3 extract calls per ticker.
+  Because candidates need not clear the Pydantic boundary on the same attempt — one may validate
+  first time while a sibling needs the stricter retry — the three classification outcomes are
+  reunited by a `Merge Classifications` node (append, 3 inputs) *before* selection runs. Without it,
+  selection runs once per branch over a partial set and the sub-workflow returns one result per
+  branch, the first of which may be the loser. This is invisible with a model that always validates
+  first time, which is how it survived until the `x-ai/grok-4.3` swap surfaced it.
 - **Earnings figures come from the disclosure's PDF, not its report page.** Maya publishes a
   disclosure in three layers and only the last has numbers: the report page is an SPA shell
   (its visible text is navigation, the report list, and a live stock quote); its iframe holds a

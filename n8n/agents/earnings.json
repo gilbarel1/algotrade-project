@@ -733,6 +733,20 @@
         1590,
         -20
       ]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 3
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "id": "merge-classifications",
+      "name": "Merge Classifications",
+      "position": [
+        1590,
+        -140
+      ]
     }
   ],
   "connections": {
@@ -903,7 +917,7 @@
       "main": [
         [
           {
-            "node": "Pick Most Material",
+            "node": "Merge Classifications",
             "type": "main",
             "index": 0
           }
@@ -976,9 +990,9 @@
       "main": [
         [
           {
-            "node": "Pick Most Material",
+            "node": "Merge Classifications",
             "type": "main",
-            "index": 0
+            "index": 1
           }
         ]
       ]
@@ -987,9 +1001,9 @@
       "main": [
         [
           {
-            "node": "Pick Most Material",
+            "node": "Merge Classifications",
             "type": "main",
-            "index": 0
+            "index": 2
           }
         ]
       ]
@@ -1189,6 +1203,17 @@
         [
           {
             "node": "Make 3 Samples",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Classifications": {
+      "main": [
+        [
+          {
+            "node": "Pick Most Material",
             "type": "main",
             "index": 0
           }
