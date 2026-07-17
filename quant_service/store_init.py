@@ -1,7 +1,7 @@
 """Create the DuckDB schema (§4.2) idempotently.
 
-Run once to produce quant_service/store.duckdb with all seven tables:
-prices, news, earnings, runs, recommendations, costs, evals.
+Run once to produce quant_service/store.duckdb with all six tables:
+prices, news, earnings, runs, recommendations, costs.
 
 Usage:
     python store_init.py            # uses DUCKDB_PATH env or the default below
@@ -52,10 +52,9 @@ CREATE TABLE IF NOT EXISTS costs (
     PRIMARY KEY(run_id, agent, model)
 );
 
-CREATE TABLE IF NOT EXISTS evals (
-    eval_id TEXT PRIMARY KEY, run_at TIMESTAMP, agent TEXT, dataset TEXT,
-    metric TEXT, value DOUBLE, details JSON
-);
+-- The evaluation harness (§9) prints its metrics rather than persisting them, so
+-- there is no `evals` table. Older DBs that created one are dropped on init.
+DROP TABLE IF EXISTS evals;
 """
 
 

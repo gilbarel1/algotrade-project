@@ -59,7 +59,7 @@ flowchart TD
         F4[/report/]
     end
 
-    QS --> CACHE[(DuckDB<br/>prices, news, earnings, runs, evals, costs)]
+    QS --> CACHE[(DuckDB<br/>prices, news, earnings, runs, recommendations, costs)]
     RM --> PDF[(reports/YYYY-MM-DD/HHMM/<br/>report.pdf)]
 ```
 
@@ -235,12 +235,9 @@ recommendations (run_id TEXT, ticker TEXT,
 costs        (run_id TEXT, agent TEXT, model TEXT, input_tokens INT,
               output_tokens INT, usd_cost DOUBLE, latency_ms INT,
               PRIMARY KEY(run_id, agent, model))
-
-evals        (eval_id TEXT PRIMARY KEY, run_at TIMESTAMP, agent TEXT, dataset TEXT,
-              metric TEXT, value DOUBLE, details JSON)
 ```
 
-The `costs` table is written on every LLM call; the `evals` table is written by the evaluation harness (§9).
+The `costs` table is written on every LLM call, including the evaluation harness's own calls (§9).
 
 ### 4.3 Cleaning and outlier handling
 
@@ -574,7 +571,7 @@ Reports are written to `reports/YYYY-MM-DD/HHMM/report.pdf` and the path is stor
 
 ## 9. Evaluation and observability
 
-A small evaluation harness ships with the system; results live in DuckDB (`evals` table) and are reported in the README.
+A small evaluation harness ships with the system; it prints a one-page summary of the metrics below, which is reproduced in the README.
 
 ### 9.1 Labeled datasets (in `eval/`)
 
@@ -593,7 +590,7 @@ A small evaluation harness ships with the system; results live in DuckDB (`evals
 
 ### 9.3 Harness
 
-`python -m eval.run` executes all of the above end-to-end against cached or fixture inputs, writes rows to `evals`, and prints a one-page summary. The README reproduces this summary so a grader sees concrete numbers, not just claims.
+`python -m eval.run` executes all of the above end-to-end against the labeled fixtures and prints a one-page summary. Its own LLM calls are cost-logged to `costs` (under an `eval-*` run id). The README reproduces the printed summary so a grader sees concrete numbers, not just claims.
 
 ### 9.4 Observability
 

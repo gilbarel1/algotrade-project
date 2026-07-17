@@ -1,0 +1,30 @@
+{"id": "s01", "text": "ICL Group signs a long-term potash supply agreement with a major Indian buyer, securing volumes through 2027.", "language": "en", "label": "positive", "score": 0.6}
+{"id": "s02", "text": "Nova Ltd posts record quarterly bookings and lifts its outlook as advanced-packaging demand accelerates.", "language": "en", "label": "positive", "score": 0.8}
+{"id": "s03", "text": "Check Point Software completes a $1.2 billion acquisition to expand its cloud security portfolio.", "language": "en", "label": "positive", "score": 0.45}
+{"id": "s04", "text": "Bank Discount raises its dividend after reporting a double-digit rise in quarterly net profit.", "language": "en", "label": "positive", "score": 0.65}
+{"id": "s05", "text": "Camtek shares jump after the chip-inspection maker beats estimates and guides revenue above consensus.", "language": "en", "label": "positive", "score": 0.75}
+{"id": "s06", "text": "Azrieli Group reports higher rental income as occupancy across its malls climbs to a multi-year high.", "language": "en", "label": "positive", "score": 0.5}
+{"id": "s07", "text": "Tower Semiconductor secures a multi-year foundry capacity deal with a leading automotive chip customer.", "language": "en", "label": "positive", "score": 0.55}
+{"id": "s08", "text": "Teva announces additional plant closures as it deepens cost cuts, though management frames the move as restructuring.", "language": "en", "label": "neutral", "score": 0.05}
+{"id": "s09", "text": "Bank Leumi will migrate its core banking platform to a new provider over the next 18 months.", "language": "en", "label": "neutral", "score": 0.0}
+{"id": "s10", "text": "Bezeq confirms the date of its next earnings call and reiterates previously issued full-year guidance.", "language": "en", "label": "neutral", "score": 0.0}
+{"id": "s11", "text": "Strauss Group appoints a new chief financial officer effective next quarter.", "language": "en", "label": "neutral", "score": 0.0}
+{"id": "s12", "text": "Ormat Technologies says a geothermal project remains on schedule with no change to prior cost estimates.", "language": "en", "label": "neutral", "score": 0.05}
+{"id": "s13", "text": "Wix reports slowing subscription growth and warns that macro headwinds may weigh on second-half bookings.", "language": "en", "label": "negative", "score": -0.55}
+{"id": "s14", "text": "El Al swings to a quarterly loss as fuel costs surge and several routes are suspended.", "language": "en", "label": "negative", "score": -0.7}
+{"id": "s15", "text": "Delek Group faces a downgrade after its leverage ratio breaches a covenant threshold.", "language": "en", "label": "negative", "score": -0.65}
+{"id": "s16", "text": "Shufersal cuts its profit outlook, citing intensifying price competition among Israeli grocers.", "language": "en", "label": "negative", "score": -0.6}
+{"id": "s17", "text": "Partner Communications loses subscribers for a third straight quarter amid a price war.", "language": "en", "label": "negative", "score": -0.5}
+{"id": "s18", "text": "The Phoenix Holdings misses profit expectations as investment income falls sharply.", "language": "en", "label": "negative", "score": -0.45}
+{"id": "s19", "text": "Mizrahi Tefahot reports steady net interest income with results broadly in line with forecasts.", "language": "en", "label": "neutral", "score": 0.05}
+{"id": "s20", "text": "Harel Insurance beats consensus on premium growth and raises its return-on-equity target for the year.", "language": "en", "label": "positive", "score": 0.6}
+{"id": "s21", "text": "מזרחי טפחות מציג עלייה של 14% ברווח הרבעוני על רקע צמיחה בתיק האשראי.", "language": "he", "label": "positive", "score": 0.65}
+{"id": "s22", "text": "נובה מדווחת על שיא הזמנות רבעוני ומעלה את התחזית השנתית בעקבות ביקוש חזק לשבבים.", "language": "he", "label": "positive", "score": 0.75}
+{"id": "s23", "text": "עזריאלי קבוצה חתמה על עסקה לרכישת מרכז לוגיסטי גדול להרחבת פעילות הנדל\"ן המניב.", "language": "he", "label": "positive", "score": 0.45}
+{"id": "s24", "text": "כיל תשקיע בהרחבת כושר הייצור באתר בים המלח כדי לענות על ביקוש גובר לאשלג.", "language": "he", "label": "positive", "score": 0.4}
+{"id": "s25", "text": "בזק תפרסם את תוצאות הרבעון בשבוע הבא ותקיים שיחת ועידה עם המשקיעים.", "language": "he", "label": "neutral", "score": 0.0}
+{"id": "s26", "text": "שטראוס ממנה מנהל כספים חדש שיכנס לתפקידו ברבעון הבא.", "language": "he", "label": "neutral", "score": 0.0}
+{"id": "s27", "text": "אורמת מציינת כי פרויקט אנרגיה גיאותרמית מתקדם לפי לוח הזמנים ללא שינוי בתקציב.", "language": "he", "label": "neutral", "score": 0.05}
+{"id": "s28", "text": "שופרסל מפחיתה את תחזית הרווח על רקע התגברות מלחמת המחירים בענף הקמעונאות.", "language": "he", "label": "negative", "score": -0.6}
+{"id": "s29", "text": "אל על עברה להפסד רבעוני עקב זינוק במחירי הדלק והשעיית מספר קווי טיסה.", "language": "he", "label": "negative", "score": -0.7}
+{"id": "s30", "text": "פרטנר מדווחת על ירידה נוספת במספר המנויים ברבעון השלישי ברציפות בשל תחרות מחירים.", "language": "he", "label": "negative", "score": -0.5}

@@ -38,7 +38,7 @@ Two layers joined by one HTTP boundary (§2 of the design):
                   └───────────────┬─────────────────────────────┘
                                   ▼
                           DuckDB (store.duckdb)
-              prices · news · earnings · runs · recommendations · costs · evals
+              prices · news · earnings · runs · recommendations · costs
 ```
 
 - **n8n** orchestrates and makes all LLM calls (via OpenRouter). It holds **no ML code**.
@@ -48,12 +48,14 @@ Two layers joined by one HTTP boundary (§2 of the design):
   libraries, so all heavy data and computation stay server-side; only short text and scores
   cross the LLM boundary.
 
-**Where the build stands:** Steps 0–10 are done — the full team runs end-to-end, persists its
+**Where the build stands:** Steps 0–11 are done — the full team runs end-to-end, persists its
 results, and renders the **PDF report** (`/report`): per-ticker pages with the dual-sentiment
 panel, the three-pass reasoning trace, earnings figures with confidence markers, news
 citations, a price chart, and a methodology footer. The orchestrator also runs on a
 **TASE-hours schedule** (Sun–Thu, gated to 09:30–17:30 Asia/Jerusalem) alongside the manual
-trigger. See the [roadmap](#build-roadmap).
+trigger. An **evaluation harness** (`npm run eval`, §9) scores the Sentiment and Earnings
+agents against hand-labeled fixtures and prints a one-page metrics summary. See the
+[roadmap](#build-roadmap).
 
 ---
 
@@ -216,6 +218,7 @@ grows by one (with `mode='scheduled'`) for the Wednesday case.
 | `npm run smoke` | Endpoint check against the running service. |
 | `npm run ingest` | Pull the watchlist's OHLC into the `prices` cache (keyless — Yahoo Finance). |
 | `npm run costs` | Per-run LLM cost summary. |
+| `npm run eval` | Evaluation harness (§9) — scores the Sentiment & Earnings agents against `eval/*_labeled.jsonl` and prints a one-page summary. `npm run eval -- --no-llm` runs the FinBERT/HeBERT arm only. |
 | `npm run db:init` | Create/repair the DuckDB schema. |
 | `npm run dev:service` / `npm run dev:n8n` | Just one side, for debugging. |
 | `npm run dev -- --reload` | Service with uvicorn auto-reload. |
@@ -299,7 +302,7 @@ Built and reviewed **one step at a time** (detail in `CLAUDE.md`).
 | 8 | Orchestrator fan-out + cost logging | ✅ done |
 | 9 | `/report` real (WeasyPrint + Jinja2) | ✅ done |
 | 10 | Schedule trigger gated by TASE hours | ✅ done |
-| 11 | Evaluation harness (`python -m eval.run`) | ⬜ |
+| 11 | Evaluation harness (`python -m eval.run`) | ✅ done |
 | 12 | Chat assistant front end (bonus, §6.5) | ⬜ |
 | 13 | S&P 500 market abstraction (config + calendar + news/schedule gate) | ⬜ |
 | 14 | SEC EDGAR earnings source + report currency | ⬜ |

@@ -31,3 +31,6 @@ pypdf             # Maya disclosure figures live in the report's PDF attachment,
 # PDF + charts (Step 9)
 weasyprint
 matplotlib
+
+# Evaluation harness (Step 11)
+tqdm              # progress bar for `python -m eval.run` (writes to stderr)
