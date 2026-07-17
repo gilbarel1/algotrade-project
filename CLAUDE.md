@@ -52,7 +52,14 @@ STOPPING HERE for review. I will not start Step <N+1> until told to proceed.
 
 ## Build Order
 
-Each step maps to sections of `docs/design.md`. Do not reorder.
+Each step maps to sections of `docs/design.md`. Build in the order listed and do not reorder.
+
+> **Note on 11 → 13 → 12.** Step 13 is listed before Step 12 deliberately (reviewer-approved). Step 12
+> is the grader-facing README and demo docs, so it is written **once, last**, with the chat assistant
+> already in place — otherwise its intro, quick-start, roadmap and `docs/demo_script.md` would be
+> rewritten right after Step 12 lands. Step numbers are unchanged because they are cross-referenced
+> throughout the repo. If Step 13 (a bonus) stalls, drop it and go straight to Step 12 — a finished
+> README matters more than the bonus feature.
 
 - [ ] **Step 0 — Scaffold (skeleton, no real logic).**
   Create the repo layout (§10). **Place the design document at `docs/design.md`** (the file may be delivered as `Technical_Design_Plan.md` — copy or rename so the path matches every reference in this file). Stand up the FastAPI app with all four endpoints (`/ohlc`, `/indicators`, `/sentiment`, `/report`) returning **hardcoded stub JSON matching the §5 contracts exactly**. Create the DuckDB schema (§4.2 — including `costs` and `evals`), `config/universe.yaml` and `config/rubric.yaml` (§4.4), `.env.example` (§11.1), Jinja2 template skeleton (`templates/report.html.j2`), empty Pydantic schema modules (`schemas/`), and `.gitignore` covering `.env`, `*.duckdb`, `reports/`, the HF cache, and `__pycache__/`. *Verify:* service starts, every endpoint returns its contract-shaped stub, schemas/config/template files match the doc, and `docs/design.md` exists at that path.
@@ -78,10 +85,10 @@ Each step maps to sections of `docs/design.md`. Do not reorder.
   Schedule Trigger using `schedule_cron`; gate inside the workflow on TASE trading hours (Asia/Jerusalem) per §6.1 and §11.2. *Verify:* scheduled run inside hours produces a report; scheduled run outside hours exits cleanly with no `runs` row.
 - [ ] **Step 11 — Evaluation harness (Milestone E, part 1).**
   Create `eval/sentiment_labeled.jsonl` (30 items, ~20 EN ~10 HE) and `eval/earnings_labeled.jsonl` (10 Maya disclosures). Implement `python -m eval.run` to score all agents and write rows to `evals` (§9). Output a printable one-page summary. *Verify:* `python -m eval.run` produces metrics for every row in the §9.2 table and writes them to the `evals` table; the summary fits on one page.
-- [ ] **Step 12 — README + supporting docs (Milestone E, part 2).**
-  Write `README.md` for a grader (not just a developer): one-paragraph intro, screenshots of a report page (`docs/screenshots/`), quick-start commands, **the evaluation harness results pasted in**, a "Design highlights" section pointing at the AI techniques in §7, and a `Limitations` section mirroring §13. Also write `docs/results.md` (walk-through of 1–2 real runs end-to-end with screenshots of the reasoning trace) and `docs/demo_script.md` (5-minute defense outline with file/screen citations). Export `docs/architecture.svg` from the §2 Mermaid diagram. *Verify:* a fresh reader can run the system end-to-end from the README alone; the AI techniques and limitations are visible without reading code.
-- [ ] **Step 13 — Chat assistant front end (bonus; only after Steps 9–12).**
+- [ ] **Step 13 — Chat assistant front end (bonus; after Step 11, before Step 12).**
   Conversational entry point to the team per **§6.5**: `n8n/chat_assistant.workflow.json` — Chat Trigger → AI Agent (Haiku 4.5, temp 0) with Simple Memory and a **Call n8n Workflow Tool** bound to the orchestrator. Give the orchestrator an **Execute Workflow Trigger** taking an optional `tickers` input (alongside the existing Manual/Schedule triggers) so one ad-hoc ticker can be analyzed without duplicating the pipeline. **The chat agent is a router, not an analyst** (§6.5): it may only call the tool and relay what it returns — it never emits a recommendation, conviction, score, or financial figure of its own. Add the chat workflow's id to `n8n_workflow_ids` so its tokens reach `costs` (§9.4). *Verify:* asking "what do you think about Teva?" runs the full pipeline for `TEVA.TA` and returns the **Risk Manager's** final call + conviction (a new `runs` row with `mode: "chat"`, a `recommendations` row, and `costs` rows including the `chat` agent); asking for a price target or a figure the tools did not return makes the assistant decline rather than invent one.
+- [ ] **Step 12 — README + supporting docs (Milestone E, part 2). Build last.**
+  Write `README.md` for a grader (not just a developer): one-paragraph intro, screenshots of a report page (`docs/screenshots/`), quick-start commands, **the evaluation harness results pasted in**, a "Design highlights" section pointing at the AI techniques in §7, and a `Limitations` section mirroring §13. Document the **chat assistant** (Step 13) as an entry point alongside the manual and scheduled triggers. Also write `docs/results.md` (walk-through of 1–2 real runs end-to-end with screenshots of the reasoning trace) and `docs/demo_script.md` (5-minute defense outline with file/screen citations). Export `docs/architecture.svg` from the §2 Mermaid diagram. *Verify:* a fresh reader can run the system end-to-end from the README alone; the AI techniques and limitations are visible without reading code.
 
 
 ---
