@@ -61,12 +61,16 @@ def _load_fewshot() -> List[dict]:
 class EarningsFetchRequest(BaseModel):
     ticker: str
     window_days: Optional[int] = None
+    candidates: Optional[int] = None
 
 
 @router.post("/earnings/fetch")
 def earnings_fetch(req: EarningsFetchRequest):
     config = _load_config()
     window = req.window_days or int(config.get("earnings_window_days", 5))
+    # How many ranked disclosures get an excerpt — i.e. how many the agent will
+    # classify before selecting the most material (§3.2, §4.4).
+    candidates = req.candidates or int(config.get("earnings_candidates", 3))
     terms = (config.get("search_terms") or {}).get(req.ticker, [])
 
     if not terms:
@@ -81,13 +85,14 @@ def earnings_fetch(req: EarningsFetchRequest):
             ),
         }
 
-    items, errors = maya.fetch_disclosures(req.ticker, terms, window)
+    items, errors = maya.fetch_disclosures(req.ticker, terms, window, candidates)
 
     n_en = sum(1 for i in items if i["language"] == "en")
     n_he = sum(1 for i in items if i["language"] == "he")
+    n_excerpted = sum(1 for i in items if i.get("excerpt"))
     summary = (
         f"{len(items)} disclosure(s) in window: {n_en} EN, {n_he} HE "
-        f"(window {window}d)."
+        f"(window {window}d); {n_excerpted} ranked candidate(s) to classify."
     )
     # Degrade only when the scrape failed somewhere AND coverage may be
     # incomplete because of it. A healthy scrape with zero matching rows is a

@@ -11,6 +11,11 @@ watchlist:
   # "NWMD.TA","NXSN.TA","AZRG.TA","FTAL.TA","CAMT.TA","SAE.TA","STRS.TA","SPEN.TA"]
 news_window_minutes: 4320
 earnings_window_days: 5
+# How many ranked disclosures the Earnings agent classifies per ticker (§3.2).
+# The newest filing is usually administrative (a Form 4, a trading notice), so
+# the top-ranked few are classified and the most material one is analyzed.
+# Each candidate costs one classify call; only the winner is extracted from.
+earnings_candidates: 3
 ohlc_lookback_days: 180
 
 # Ticker -> query terms used to fetch news (§3.1) AND to search Maya disclosures

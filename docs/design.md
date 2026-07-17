@@ -93,6 +93,13 @@ Each agent is an n8n sub-workflow. Sentiment, Earnings, and Technical run in par
 ### 3.2 Earnings Agent (self-consistent number extraction)
 
 - **Role.** Detect recent MAYA disclosures for the ticker, classify them (earnings / guidance / material event / other), and extract headline financial numbers **only when present verbatim** in the source.
+- **Which disclosure gets analyzed (top-3, most material wins).** A ticker's *newest* filing is usually administrative — a Form 4 insider statement, an "Opening of Trading" notice, a registrar update — while the disclosure that moves the thesis sits further down the list (verified: TEVA's newest is a Form 4 with its Q1 8-K 30 rows below; Elbit's newest is a *"to report Q2 results on Aug 5"* scheduling notice with the actual Q1 results 6 rows below). Analyzing the newest therefore reports "other / low" for almost every ticker, and §3.4's earnings-event conviction cap — which keys off `materiality: high` — never fires.
+
+  So the agent **classifies the top 3 candidates and returns the most material one**:
+  1. **Rank (deterministic, server-side).** `/earnings/fetch` scores in-window disclosures by title and returns them ranked, so only the top `earnings_candidates` (default 3, `config/universe.yaml`) carry an `excerpt`. Administrative filings are demoted (Forms 3/4/5, 13D/G, trading/registrar/meeting notices); results/guidance wording is promoted. This is **retrieval, not classification** — it only decides which documents are worth an LLM call.
+  2. **Classify each candidate (LLM).** The §7 classify pass runs once per candidate, so `kind` and `materiality` remain the model's judgement, never the keyword score's.
+  3. **Select.** Highest `materiality` wins (`high` > `medium` > `low`), tie broken by `kind` (`earnings` > `guidance` > `material_event` > `other`) and then recency. A mis-ranked candidate is therefore recoverable: the model simply classifies it `other/low` and a better-classified sibling is selected.
+  4. **Extract from the winner only.** Self-consistency (n=3) runs on the selected disclosure alone, so the cost is 3 classify + 3 extract calls per ticker rather than 3 × the whole chain.
 - **Self-consistency for numbers.** The language model is sampled **three times at `temperature=0.3`** for every number it extracts (revenue, EPS, guidance figures). A figure is committed only when at least two of the three samples agree (string-exact match after units normalization). Otherwise the field is marked `"ambiguous"` and shown that way in the report — never silently filled.
 - **Sources.** `maya.tase.co.il/en/reports/companies` primary; the Hebrew page as fallback with LLM translation. The Maya site is a JavaScript SPA behind bot protection, so scraping happens **server-side in the quant service** (`/earnings/fetch`, Playwright headless Chromium) — n8n moves only compact disclosure items, mirroring the news pattern (§3.1).
 - **Where the figures actually live (verified against the live site).** A disclosure is published across three layers, and only the third contains financial figures:
@@ -102,18 +109,22 @@ Each agent is an n8n sub-workflow. Sentiment, Earnings, and Technical run in par
 
   The excerpt returned by `/earnings/fetch` is therefore taken from **layer 3**: resolve the report id's PDF attachment, extract its text, and bound it to `_EXCERPT_MAX`. Reading only layer 1 (the naive `body.innerText`) yields an excerpt in which no figure is ever present, so every field votes `"ambiguous"` and §3.2's self-consistency never commits — the mechanism is intact but never exercised. `<bucket>` is the report id rounded to its enclosing 1000 (id `1737984` → `1737001-1738000`). When the PDF is unreachable or carries no extractable text, the agent falls back to the layer-2 cover sheet and then the title alone; figures then come out `"ambiguous"`, never invented (§9.4).
 - **Output (JSON).**
+  `selected_disclosure` is the disclosure the agent classified *and* extracted from — the most material of the ranked candidates, not necessarily the newest. `considered` lists the other classified candidates so a reviewer can see what was rejected and why the winner won; it is the audit trail for the selection and carries no figures (only the winner is extracted from).
   ```jsonc
   { "ticker":"TEVA.TA",
-    "latest_disclosure":{"date":"2026-06-19","type":"earnings","language":"en",
+    "selected_disclosure":{"date":"2026-06-19","type":"earnings","language":"en",
                           "title":"Q1 2026 results","url":"https://maya.tase.co.il/…",
                           "title_en":null,  // English translation of a Hebrew title; null for EN disclosures (§8.1 translation flag)
                           "summary":"Q1 beat on revenue; guidance reaffirmed.",
                           "extracted":{"revenue":{"value":"$4.1B","confidence":3},
                                        "eps":{"value":"$0.62","confidence":3},
                                        "guidance":{"value":"ambiguous","confidence":1}}},
+    "considered":[{"date":"2026-06-22","title":"FORM 4 — Shields Matthew","url":"https://maya.tase.co.il/…",
+                    "kind":"other","materiality":"low"}],  // classified but not selected
     "is_earnings_window": true, "materiality":"high",
     "summary":"Q1 beat on revenue; guidance reaffirmed." }
   ```
+  `selected_disclosure` is `null` (and `considered` empty) when the scrape is healthy but nothing matched the window — a valid "no recent disclosure", never padded (§13, §14).
 
 ### 3.3 Technical Agent
 
@@ -244,6 +255,7 @@ The `costs` table is written on every LLM call; the `evals` table is written by 
 watchlist: ["TEVA.TA","NICE.TA","LUMI.TA","POLI.TA","ESLT.TA"]
 news_window_minutes: 120
 earnings_window_days: 5
+earnings_candidates: 3   # disclosures classified per ticker; most material wins (§3.2)
 ohlc_lookback_days: 180
 # Ticker -> query terms used to fetch news (§3.1). *.TA symbols are not searchable
 # on NewsAPI/RSS, so each ticker maps to the company's common name(s) (EN + HE).
@@ -293,7 +305,7 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
 | `POST /sentiment`  | FinBERT/HeBERT score for a batch of texts (auto-routes by detected language) |
 | `POST /news/fetch` | Fetch + clean recent news for a ticker (NewsAPI EN + RSS EN/HE) and return compact items plus the few-shot examples; keeps NewsAPI/RSS access and §4.3 cleaning server-side so n8n never fetches or parses raw feeds |
 | `POST /news/store` | Upsert per-article dual-sentiment scores into the `news` table (§4.2); n8n cannot write DuckDB directly |
-| `POST /earnings/fetch` | Scrape + clean recent Maya disclosures for a ticker (EN primary, HE fallback; Playwright headless Chromium) and return compact items — the newest with a bounded text excerpt **extracted from the disclosure's PDF attachment, the only layer carrying financial figures (§3.2)** — plus the few-shot examples; keeps SPA rendering, bot-protection handling, PDF text extraction, and §4.3 cleaning server-side so n8n never touches raw pages or PDFs |
+| `POST /earnings/fetch` | Scrape + clean recent Maya disclosures for a ticker (EN primary, HE fallback; Playwright headless Chromium) and return compact items **ranked by relevance (§3.2), the top `earnings_candidates` each with a bounded text excerpt extracted from that disclosure's PDF attachment — the only layer carrying financial figures** — plus the few-shot examples; keeps SPA rendering, bot-protection handling, PDF text extraction, ranking, and §4.3 cleaning server-side so n8n never touches raw pages or PDFs |
 | `POST /earnings/store` | Upsert the classified disclosure + self-consistency extraction into the `earnings` table (§4.2); n8n cannot write DuckDB directly |
 | `POST /report`     | Render PDF from Risk Manager output + run id                                 |
 | `POST /validate`   | Validate an agent's raw LLM JSON against its Pydantic schema in `schemas/` (the §9.4 LLM-boundary guardrail; n8n's embedded Python cannot import the repo's schemas, so validation is served over HTTP) |
@@ -349,12 +361,16 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
   "items":[{"id":"<sha1(symbol|url)>","symbol":"TEVA.TA",
             "published_at":"2026-06-19T06:05:00+00:00",
             "title":"Q1 2026 results","url":"https://maya.tase.co.il/…",
-            "language":"en",
+            "language":"en", "rank_score":6,
             "excerpt":"Teva … revenues were $4.1 billion …"}, …],
   "few_shot":[{"title":"…","excerpt":"…","language":"en","kind":"earnings",
                "materiality":"high","reasoning":"…"}, …],
   "summary":"2 disclosure(s) in window: 2 EN, 0 HE (window 5d)." }
-// Only the newest item carries `excerpt` (the verbatim source for §3.2 extraction).
+// Items are ordered by `rank_score` desc, then recency (§3.2 ranking). Only the
+// top `earnings_candidates` carry an `excerpt` — the verbatim source the §3.2
+// classify + self-consistency passes read; the rest are context only.
+// `language` on an excerpted item is re-derived from the PDF text, since Maya's
+// English site serves AI-translated titles for Hebrew filings (§3.2).
 // Scrape failure degrades, never 500s: summary prefixed "degraded: <reason>".
 
 // POST /earnings/store

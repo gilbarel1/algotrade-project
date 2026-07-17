@@ -75,7 +75,25 @@ _USER_AGENT = (
 # The disclosure's PDF attachment — the only layer carrying financial figures
 # (§3.2). Served by a plain file host (no Imperva), so httpx suffices; the
 # report id's bucket is its enclosing 1000 (1737984 -> "1737001-1738000").
-_PDF_URL = "https://mayafiles.tase.co.il/rpdf/{bucket}/P{rid}-00.pdf"
+#
+# Tried in order, first 200 wins:
+#  1. `rpdf/P<id>-00.pdf` — the filing as submitted. English for foreign-issuer
+#     filers (TEVA/NICE/ICL/ESLT), **Hebrew for domestic filers** (the banks).
+#     Either way it is the official, binding document, so it is always preferred.
+#  2. `translated_rhtm/H<id>.pdf` — TASE's AI English translation of a Hebrew
+#     filing. A genuine last resort: Maya itself disclaims it as "unofficial and
+#     nonbinding… the official and binding versions are exclusively those
+#     published in Hebrew", and a machine translation is not a safe source of
+#     verbatim figures (§3.2). Used only when no original PDF exists, where the
+#     alternative is the figure-less report page.
+#
+# Measured over 42 disclosures across TEVA/NICE/ICL/ESLT/LUMI/POLI: original 31,
+# translation-only 7, neither 4 (trading notices that carry no attachment at all
+# and correctly yield "ambiguous").
+_PDF_URLS = (
+    "https://mayafiles.tase.co.il/rpdf/{bucket}/P{rid}-00.pdf",
+    "https://mayafiles.tase.co.il/translated_rhtm/{bucket}/H{rid}.pdf",
+)
 _REPORT_ID_RE = re.compile(r"/reports/(?:details/)?(\d+)")
 _PDF_TIMEOUT_S = 60
 
@@ -83,18 +101,74 @@ _PDF_TIMEOUT_S = 60
 # Deliberately strict: it selects *where in the PDF the excerpt starts*, so a
 # loose pattern would anchor on legal boilerplate ("Form S-8", "Rule 13a-16")
 # instead of the results summary (verified against NICE's Q1 6-K).
-# Hebrew is matched too (§3.2 HE fallback): there the magnitude word *follows*
-# the number ("1.5 מיליארד ₪"), and the majority vote already normalizes those
-# units — an EN-only pattern would leave a HE disclosure's figures unanchored
-# and every field "ambiguous" despite being present.
+# Hebrew is matched too (§3.2 HE fallback), and it is written the other way
+# round: the amount comes first and the unit follows it — "1.5 מיליארד ש״ח",
+# or, in the banks' filings, a fully-written figure with no magnitude word at
+# all ("1,105,619,000 ש״ח", verified in Leumi's shelf offering). The currency
+# is usually spelled (ש״ח / שקל), not the ₪ sign, and the abbreviation takes
+# either an ASCII quote or a Hebrew gershayim (U+05F4). An EN-shaped pattern
+# matches none of that and would leave a Hebrew disclosure's figures
+# unanchored — "ambiguous" despite being present. The majority vote already
+# normalizes these units, so they must be findable here too.
 _MONEY_RE = re.compile(
     r"[$€₪]\s?\d[\d,]*(?:\.\d+)?\s*(?:billion|million|bn\b)"
+    r"|\d[\d,]*(?:\.\d+)?\s*(?:מיליון|מיליארד|אלפי)?\s*(?:ש[\"״]ח|₪|שקלים|שקל)"
     r"|\d[\d,]*(?:\.\d+)?\s*(?:מיליון|מיליארד)"
     r"|(?:EPS|earnings per share|רווח למניה)[^\n]{0,40}?[$€₪]?\s?\d+\.\d+",
     re.I,
 )
 _PDF_MIN_MONEY_HITS = 3  # per page, to clear boilerplate false positives
 _PDF_PAGE_SPAN = 3  # pages kept from the anchor (highlights + outlook + tables)
+
+# §3.2 relevance ranking. Title-only, deliberately coarse: it selects which
+# disclosures get an LLM call, and the model still classifies whatever it is
+# handed, so a miss costs one wasted candidate slot — never a wrong `kind`.
+_NOISE_RE = re.compile(
+    r"\bform\s*[345]\b|beneficial ownership|statement of changes"
+    r"|\b13[dg]\b|conflict minerals|form\s*sd\b"
+    r"|opening of trading|identifying details|change of identifying"
+    r"|change in corporation details|register of shareholders"
+    r"|holdings of interested parties|trustee report"
+    r"|\bproxy\b|meeting (?:to be held|scheduled)|postponed"
+    # Meeting outcomes ("Results of Annual Meeting", "Form 6-K (SGM results)")
+    # carry results wording but report governance votes, not financials.
+    r"|annual meeting|general meeting|meeting of shareholders|\bagm\b|\bsgm\b"
+    # A credit-rating "stable/positive outlook" is not earnings guidance; without
+    # this, a rating affirmation outranks the quarterly report (seen on ICL).
+    r"|(?:stable|positive|negative|developing)\s+outlook"
+    r"|שינוי החזקות|מרשם בעלי המניות|החזקות בעלי עניין|אסיפה כללית",
+    re.I,
+)
+# Results wording that announces a *future* release rather than reporting one.
+_SCHEDULING_RE = re.compile(
+    r"\bto report\b|\bwill report\b|\bto webcast\b|release on\b"
+    r"|\bto (?:announce|host|hold)\b|\bconference call\b|\binvestor day\b",
+    re.I,
+)
+_RESULTS_RE = re.compile(
+    r"\bresults\b|\bfinancial statements?\b|\bquarter(?:ly)?\b|\bannual report\b"
+    r"|\bq[1-4]\b|\bfy\d{2,4}\b|\bform\s*(?:10-?[qk]|20-?f)\b|\bearnings\b"
+    r"|\bguidance\b|\boutlook\b|\bforecast\b|\bperiodic report\b"
+    r"|דוח(?:ות)?\s+כספי|דוח רבעוני|דוח תקופתי|תוצאות",
+    re.I,
+)
+_MATERIAL_RE = re.compile(
+    r"\bdividend\b|\bacquisition\b|\bacquire\b|\bmerger\b|\btender offer\b"
+    r"|\bcontract\b|\bawarded\b|\brating\b|\bprofit warning\b|\brecall\b"
+    r"|\bfda\b|\bapproval\b|\blitigation\b|\bsettlement\b"
+    r"|דיבידנד|מיזוג|רכישה|הסכם",
+    re.I,
+)
+
+# Hebrew block, and the share of letters that makes a *document* Hebrew:
+# a simple majority. Measured excerpts cluster at 0% (English filings and TASE
+# translations) and 100% (Hebrew originals), with mixed filings — an English
+# press release behind a Hebrew MAGNA cover — at ~38%. Those are English as far
+# as this matters: the label describes the text handed to the model, not the
+# filing's provenance, and the model reads the press release.
+_HEBREW_START, _HEBREW_END = 0x0590, 0x05FF
+_LANG_HEBREW_SHARE = 0.50
+_LANG_MIN_LETTERS = 200  # below this the sample is too small to call
 
 _PAGE_TIMEOUT_MS = 45_000
 _SETTLE_MS = 3_000  # extra wait after load for late XHRs / list hydration
@@ -116,22 +190,24 @@ _cache_lock = threading.Lock()
 
 
 def fetch_disclosures(
-    ticker: str, terms: List[str], window_days: int
+    ticker: str, terms: List[str], window_days: int, candidates: int = 3
 ) -> Tuple[List[dict], List[str]]:
     """Return (items, errors) for a ticker's recent Maya disclosures.
 
     Item shape (compact — §2 heavy-data guardrail):
-        {id, symbol, published_at (UTC ISO), title, url, language, excerpt}
-    `excerpt` is populated only for the newest item (the one the Earnings
-    Agent classifies and extracts numbers from); older items carry "".
+        {id, symbol, published_at (UTC ISO), title, url, language, rank_score,
+         excerpt}
+    Items are ordered by §3.2 relevance rank, then recency. `excerpt` is
+    populated for the top `candidates` — the disclosures the Earnings Agent
+    classifies, one of which it extracts numbers from; the rest carry "".
     Errors are human-readable degrade reasons; items may be partial.
     """
-    key = f"{ticker}|{window_days}"
+    key = f"{ticker}|{window_days}|{candidates}"
     with _cache_lock:
         hit = _result_cache.get(key)
         if hit and time.monotonic() - hit[0] < _TTL_SECONDS:
             return list(hit[1]), list(hit[2])
-        items, errors = _scrape_ticker(ticker, terms, window_days)
+        items, errors = _scrape_ticker(ticker, terms, window_days, candidates)
         _result_cache[key] = (time.monotonic(), items, errors)
         return list(items), list(errors)
 
@@ -148,7 +224,7 @@ def clear_caches() -> None:
 
 
 def _scrape_ticker(
-    ticker: str, terms: List[str], window_days: int
+    ticker: str, terms: List[str], window_days: int, candidates: int = 3
 ) -> Tuple[List[dict], List[str]]:
     """Drive one headless-browser session for a ticker. Never raises."""
     errors: List[str] = []
@@ -206,9 +282,21 @@ def _scrape_ticker(
 
                 items = _rows_to_items(rows, ticker, window_days)
 
-                if items:
-                    excerpt, exc_errors = _fetch_excerpt(page, items[0]["url"])
-                    items[0]["excerpt"] = excerpt
+                # §3.2 step 1: rank, then spend a PDF fetch only on the few
+                # candidates that will actually be classified.
+                items = rank_items(items)
+                for item in items[:candidates]:
+                    excerpt, exc_errors = _fetch_excerpt(page, item["url"])
+                    item["excerpt"] = excerpt
+                    # Re-label from the document itself. The row's language came
+                    # from its title, but Maya's English site serves AI-translated
+                    # titles for Hebrew filings — so a Hebrew disclosure arrives
+                    # tagged "en" and the §3.2 prompt would tell the model the
+                    # Hebrew text in front of it is English, suppressing the
+                    # inline translation and the §8.1 title_en flag.
+                    doc_language = _text_language(excerpt)
+                    if doc_language:
+                        item["language"] = doc_language
                     errors.extend(exc_errors)
                 return items, errors
             finally:
@@ -421,6 +509,44 @@ def _rows_to_items(rows: List[dict], ticker: str, window_days: int) -> List[dict
     return items
 
 
+def rank_items(items: List[dict]) -> List[dict]:
+    """Order disclosures by how likely they are to matter (§3.2 step 1).
+
+    A ticker's newest filing is usually administrative — a Form 4, an "Opening
+    of Trading" notice, a registrar update — while the disclosure that moves the
+    thesis sits further down (TEVA's Q1 8-K was 30 rows below its newest Form 4;
+    Elbit's actual Q1 results 6 rows below a "we will report on Aug 5" notice).
+    Ranking decides which few documents are worth an LLM call.
+
+    This is **retrieval, not classification**: the score never becomes `kind` or
+    `materiality` — the model still decides those, on each of the top candidates
+    (§3.2 step 2). That is what makes the keyword lists safe to be imperfect: a
+    mis-ranked candidate is simply classified `other/low` and loses selection to
+    a sibling. Scores are attached as `rank_score` for auditability.
+
+    Ties keep the incoming order, which `_rows_to_items` already made
+    newest-first — so among equally-plausible disclosures, the newest wins.
+    """
+    ranked = []
+    for item in items:
+        title = (item.get("title") or "").lower()
+        score = 0
+        if _NOISE_RE.search(title):
+            score -= 4
+        if _SCHEDULING_RE.search(title):
+            # "…To Report Q2 2026 Results Release on August 5" — results wording
+            # but no results in it. Demoted before the promotion below can fire.
+            score -= 3
+        if _RESULTS_RE.search(title):
+            score += 5
+        if _MATERIAL_RE.search(title):
+            score += 2
+        ranked.append({**item, "rank_score": score})
+    # `sorted` is stable, so equal scores retain the newest-first input order.
+    ranked.sort(key=lambda i: i["rank_score"], reverse=True)
+    return ranked
+
+
 def _rows_from_dom(page, language: str) -> List[dict]:
     """Last-resort fallback: rendered report links + their row text."""
     try:
@@ -549,28 +675,39 @@ def _pdf_excerpt(report_id: str) -> Tuple[str, List[str]]:
     except ImportError as exc:  # noqa: BLE001
         return "", [f"maya pdf: dependency missing ({exc})"]
 
-    url = _PDF_URL.format(bucket=_pdf_bucket(report_id), rid=report_id)
-    try:
-        from data import tls  # OS-trust context: corporate TLS interception
+    from data import tls  # OS-trust context: corporate TLS interception
 
-        resp = httpx.get(
-            url,
-            timeout=_PDF_TIMEOUT_S,
-            follow_redirects=True,
-            verify=tls.ssl_context(),
-            headers={"User-Agent": _USER_AGENT},
-        )
-        if resp.status_code != 200 or not resp.content.startswith(b"%PDF-"):
-            return "", [f"maya pdf: {url} -> HTTP {resp.status_code}, not a PDF"]
+    errors: List[str] = []
+    pages: List[str] = []
+    bucket = _pdf_bucket(report_id)
+    for template in _PDF_URLS:
+        url = template.format(bucket=bucket, rid=report_id)
+        try:
+            resp = httpx.get(
+                url,
+                timeout=_PDF_TIMEOUT_S,
+                follow_redirects=True,
+                verify=tls.ssl_context(),
+                headers={"User-Agent": _USER_AGENT},
+            )
+            if resp.status_code != 200 or not resp.content.startswith(b"%PDF-"):
+                errors.append(f"maya pdf: {url} -> HTTP {resp.status_code}, not a PDF")
+                continue
+            reader = pypdf.PdfReader(io.BytesIO(resp.content))
+            candidate = [(p.extract_text() or "") for p in reader.pages]
+        except Exception as exc:  # noqa: BLE001 - any fetch/parse failure degrades
+            errors.append(f"maya pdf: {url} -> {_reason(exc)}")
+            continue
 
-        reader = pypdf.PdfReader(io.BytesIO(resp.content))
-        pages = [(p.extract_text() or "") for p in reader.pages]
-    except Exception as exc:  # noqa: BLE001 - any fetch/parse failure degrades
-        return "", [f"maya pdf: {_reason(exc)}"]
+        if not any(p.strip() for p in candidate):
+            # A scanned disclosure has no text layer; we do not OCR (§13).
+            errors.append(f"maya pdf: {url} -> no extractable text ({len(candidate)} pages)")
+            continue
+        pages = candidate
+        break
 
-    if not any(p.strip() for p in pages):
-        # A scanned disclosure has no text layer; we do not OCR (§13).
-        return "", [f"maya pdf: no extractable text ({len(pages)} pages)"]
+    if not pages:
+        return "", errors
 
     anchor = next(
         (
@@ -581,7 +718,28 @@ def _pdf_excerpt(report_id: str) -> Tuple[str, List[str]]:
         0,
     )
     window = "\n".join(pages[anchor : anchor + _PDF_PAGE_SPAN])
+    # `errors` is dropped deliberately on success: a 404 on the preferred URL
+    # followed by a hit on the fallback is a normal resolution, not a degrade —
+    # surfacing it would mark an otherwise-complete agent "degraded" (§9.4).
     return clean_text(window, _EXCERPT_MAX), []
+
+
+def _text_language(text: str) -> Optional[str]:
+    """"he"/"en" from a document's Hebrew-letter share, or None if undecidable.
+
+    Not `nlp.language_detect.detect`, which routes /sentiment on *any* Hebrew
+    codepoint: that is right for a headline but wrong here, because an English
+    filing routinely carries a few Hebrew characters (the issuer's registered
+    name on the MAGNA cover) and would be misread as Hebrew. A share of the
+    letters decides instead — measured documents sit at 48-84% (Hebrew
+    originals) or ~0% (English filings and TASE's translations), so the
+    threshold is nowhere near a real boundary.
+    """
+    letters = [c for c in text if c.isalpha()]
+    if len(letters) < _LANG_MIN_LETTERS:
+        return None
+    hebrew = sum(1 for c in letters if _HEBREW_START <= ord(c) <= _HEBREW_END)
+    return "he" if hebrew / len(letters) >= _LANG_HEBREW_SHARE else "en"
 
 
 def _fetch_excerpt(page, url: str) -> Tuple[str, List[str]]:
