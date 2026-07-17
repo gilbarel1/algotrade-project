@@ -21,10 +21,12 @@ Agent has **two** LLM boundaries, each validated via ``POST /validate``:
   canonical ``status``). Used by the Step 11 evaluation harness and by callers
   validating the assembled payload. Classified fields are optional so a
   ``degraded`` result (LLM boundary failed twice) still validates without
-  fabricated values.
+  fabricated values. ``selected_disclosure`` is the most material of the ranked
+  candidates rather than the newest filing, and ``considered`` records the
+  classified-but-rejected ones (§3.2).
 """
 
-from typing import Dict, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -72,8 +74,10 @@ class ExtractedFigure(BaseModel):
     confidence: int = Field(ge=1, le=3)
 
 
-class LatestDisclosure(BaseModel):
-    """The §3.2 ``latest_disclosure`` block."""
+class SelectedDisclosure(BaseModel):
+    """The §3.2 ``selected_disclosure`` block — the disclosure the agent
+    classified *and* extracted from: the most material of the ranked
+    candidates, which is usually **not** the newest filing."""
 
     date: Optional[str] = None
     type: Optional[Kind] = None  # null when classification degraded
@@ -85,11 +89,27 @@ class LatestDisclosure(BaseModel):
     extracted: Optional[Dict[str, ExtractedFigure]] = None
 
 
+class ConsideredDisclosure(BaseModel):
+    """A candidate that was classified but not selected (§3.2).
+
+    The audit trail for the choice: it shows what the agent looked at and how
+    the model rated it, so a reviewer can see why the winner won. Carries no
+    ``extracted`` — self-consistency runs on the selected disclosure only.
+    """
+
+    date: Optional[str] = None
+    title: str
+    url: str
+    kind: Optional[Kind] = None  # null when that candidate's classification degraded
+    materiality: Optional[Materiality] = None
+
+
 class EarningsAgentOutput(BaseModel):
     """Full §3.2 output shape returned by the Earnings sub-workflow."""
 
     ticker: str
-    latest_disclosure: Optional[LatestDisclosure] = None
+    selected_disclosure: Optional[SelectedDisclosure] = None
+    considered: List[ConsideredDisclosure] = []
     is_earnings_window: bool
     materiality: Optional[Materiality] = None
     summary: str

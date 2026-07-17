@@ -24,7 +24,10 @@
       "name": "When Executed by Another Workflow",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
-      "position": [-1600, 0]
+      "position": [
+        -1600,
+        0
+      ]
     },
     {
       "parameters": {
@@ -41,7 +44,10 @@
       "name": "Fetch Disclosures",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [-1380, 0],
+      "position": [
+        -1380,
+        0
+      ],
       "onError": "continueRegularOutput"
     },
     {
@@ -52,7 +58,10 @@
       "name": "Prep Fetch",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-1160, 0]
+      "position": [
+        -1160,
+        0
+      ]
     },
     {
       "parameters": {
@@ -83,7 +92,10 @@
       "name": "Has Disclosures?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [-940, 0]
+      "position": [
+        -940,
+        0
+      ]
     },
     {
       "parameters": {
@@ -114,37 +126,49 @@
       "name": "Degraded Fetch?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [-720, 200]
+      "position": [
+        -720,
+        200
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Maya fetch failed/degraded with no disclosures (§9.4): explicit reason,\n// no fabrication. Risk Manager downgrades conviction.\nconst c = $('Prep Fetch').first().json;\nreturn [{ json: {\n  ticker: c.ticker,\n  latest_disclosure: null,\n  is_earnings_window: false,\n  materiality: null,\n  summary: `degraded: ${c.fetch_summary || 'maya fetch failed'}`,\n  status: 'degraded',\n} }];\n"
+        "jsCode": "// Maya fetch failed/degraded with no disclosures (§9.4): explicit reason,\n// no fabrication. Risk Manager downgrades conviction.\nconst c = $('Prep Fetch').first().json;\nreturn [{ json: {\n  ticker: c.ticker,\n  selected_disclosure: null,\n  considered: [],\n  is_earnings_window: false,\n  materiality: null,\n  summary: `degraded: ${c.fetch_summary || 'maya fetch failed'}`,\n  status: 'degraded',\n} }];\n"
       },
       "id": "code-degraded",
       "name": "Degraded Output",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-500, 140]
+      "position": [
+        -500,
+        140
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Healthy scrape, zero matching disclosures: a valid \"no recent disclosure\"\n// result (§13, §14). Never padded.\nconst c = $('Prep Fetch').first().json;\nconst w = c.window_days ? ` in the last ${c.window_days}d` : ' in the disclosure window';\nreturn [{ json: {\n  ticker: c.ticker,\n  latest_disclosure: null,\n  is_earnings_window: false,\n  materiality: 'low',\n  summary: `No recent Maya disclosures${w}.`,\n  status: 'ok',\n} }];\n"
+        "jsCode": "// Healthy scrape, zero matching disclosures: a valid \"no recent disclosure\"\n// result (§13, §14). Never padded.\nconst c = $('Prep Fetch').first().json;\nconst w = c.window_days ? ` in the last ${c.window_days}d` : ' in the disclosure window';\nreturn [{ json: {\n  ticker: c.ticker,\n  selected_disclosure: null,\n  considered: [],\n  is_earnings_window: false,\n  materiality: 'low',\n  summary: `No recent Maya disclosures${w}.`,\n  status: 'ok',\n} }];\n"
       },
       "id": "code-no-disclosure",
       "name": "No-Disclosure Output",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-500, 300]
+      "position": [
+        -500,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Build the few-shot classify/translate prompt (§3.2, §7). Only the latest\n// disclosure's title + bounded excerpt traverse the LLM — never raw pages\n// (§2 guardrail). Few-shot examples come from /earnings/fetch (loaded from\n// prompts/earnings_examples.jsonl).\nconst c = $('Prep Fetch').first().json;\nconst latest = c.items[0];\nconst shots = (c.few_shot || [])\n  .map(e => `- (${e.language}) \"${e.title}\" — ${e.excerpt || ''} => kind=${e.kind}, materiality=${e.materiality} — ${e.reasoning}`)\n  .join('\\n');\nconst prompt = [\n  `You are the Earnings Agent for TA-35 ticker ${c.ticker}.`,\n  'Classify the TASE (Maya) disclosure below and summarize it in English.',\n  'kind must be one of: earnings, guidance, material_event, other.',\n  'materiality must be one of: low, medium, high.',\n  'If the disclosure is in Hebrew, set title_en to a faithful English translation of the title; if it is already in English, set title_en to null.',\n  'Base everything only on the text provided. Do not state any financial figure in the summary unless it appears verbatim in the text.',\n  '',\n  'Labeled examples:',\n  shots || '(none)',\n  '',\n  'Disclosure:',\n  `language: ${latest.language}`,\n  `title: ${latest.title}`,\n  `text: ${latest.excerpt || '(no further text available)'}`,\n  '',\n  'Respond with ONLY a JSON object, no markdown fences, exactly this shape:',\n  '{\"kind\":\"<earnings|guidance|material_event|other>\",\"materiality\":\"<low|medium|high>\",\"summary\":\"<English, under 500 chars>\",\"title_en\":<string or null>}',\n].join('\\n');\nreturn [{ json: { ticker: c.ticker, run_id: c.run_id, prompt } }];\n"
+        "jsCode": "// Build one few-shot classify/translate prompt per ranked candidate (§3.2, §7).\n// /earnings/fetch returns items ranked by relevance and excerpts only the top\n// `earnings_candidates`, so the ones carrying an excerpt are exactly the ones\n// worth an LLM call. Each becomes its own item: the Classify chain below runs\n// once per item, so `kind`/`materiality` stay the model's judgement on every\n// candidate — the server-side rank only chose who gets asked (§3.2 step 2).\n// Only titles + bounded excerpts traverse the LLM, never raw pages (§2).\nconst c = $('Prep Fetch').first().json;\nlet cands = c.items\n  .map((it, i) => ({ ...it, cand_idx: i }))\n  .filter((it) => it.excerpt);\n// Every PDF failed: still classify the top-ranked disclosure from its title\n// alone rather than dropping the ticker. Figures will vote \"ambiguous\" (§9.4).\nif (!cands.length && c.items.length) cands = [{ ...c.items[0], cand_idx: 0 }];\n\nconst shots = (c.few_shot || [])\n  .map(e => `- (${e.language}) \"${e.title}\" — ${e.excerpt || ''} => kind=${e.kind}, materiality=${e.materiality} — ${e.reasoning}`)\n  .join('\\n');\n\nreturn cands.map((cand) => {\n  const prompt = [\n    `You are the Earnings Agent for TA-35 ticker ${c.ticker}.`,\n    'Classify the TASE (Maya) disclosure below and summarize it in English.',\n    'kind must be one of: earnings, guidance, material_event, other.',\n    'materiality must be one of: low, medium, high.',\n    'If the disclosure is in Hebrew, set title_en to a faithful English translation of the title; if it is already in English, set title_en to null.',\n    'Base everything only on the text provided. Do not state any financial figure in the summary unless it appears verbatim in the text.',\n    '',\n    'Labeled examples:',\n    shots || '(none)',\n    '',\n    'Disclosure:',\n    `language: ${cand.language}`,\n    `title: ${cand.title}`,\n    `text: ${cand.excerpt || '(no further text available)'}`,\n    '',\n    'Respond with ONLY a JSON object, no markdown fences, exactly this shape:',\n    '{\"kind\":\"<earnings|guidance|material_event|other>\",\"materiality\":\"<low|medium|high>\",\"summary\":\"<English, under 500 chars>\",\"title_en\":<string or null>}',\n  ].join('\\n');\n  return { json: { ticker: c.ticker, run_id: c.run_id, cand_idx: cand.cand_idx, prompt } };\n});\n"
       },
       "id": "code-build-classify",
       "name": "Build Classify Prompt",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-720, -140]
+      "position": [
+        -720,
+        -140
+      ]
     },
     {
       "parameters": {
@@ -157,7 +181,10 @@
       "name": "OpenRouter Haiku (t=0)",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
       "typeVersion": 1,
-      "position": [-280, 60],
+      "position": [
+        -280,
+        60
+      ],
       "credentials": {
         "openRouterApi": {
           "id": "REPLACE_AFTER_IMPORT",
@@ -174,18 +201,25 @@
       "name": "Classify",
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
       "typeVersion": 1.5,
-      "position": [-500, -140],
+      "position": [
+        -500,
+        -140
+      ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Parse the raw LLM text into a candidate payload for POST /validate.\n// A parse failure is NOT swallowed — it becomes an invalid payload so the\n// validate -> retry -> degraded path handles it (§9.4).\nconst raw = ($json.text ?? '').toString().trim()\n  .replace(/^```(?:json)?\\s*/i, '')\n  .replace(/```\\s*$/, '');\nlet payload;\ntry {\n  payload = JSON.parse(raw);\n} catch (e) {\n  payload = { _parse_error: String(e) };\n}\nif (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {\n  payload = { _not_an_object: true };\n}\nreturn [{ json: { agent: 'earnings', payload, raw } }];\n"
+        "jsCode": "// Parse one candidate's raw LLM text into a payload for POST /validate.\n// A parse failure is NOT swallowed — it becomes an invalid payload so the\n// validate -> retry -> degraded path handles it (§9.4). `cand_idx` is carried\n// via item pairing so each classification stays tied to its own disclosure.\nconst raw = ($json.text ?? '').toString().trim()\n  .replace(/^```(?:json)?\\s*/i, '')\n  .replace(/```\\s*$/, '');\nlet payload;\ntry {\n  payload = JSON.parse(raw);\n} catch (e) {\n  payload = { _parse_error: String(e) };\n}\nif (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {\n  payload = { _not_an_object: true };\n}\nreturn { json: { agent: 'earnings', cand_idx: $('Build Classify Prompt').item.json.cand_idx, payload, raw } };\n",
+        "mode": "runOnceForEachItem"
       },
       "id": "code-parse-classify",
       "name": "Parse Classification",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-280, -140]
+      "position": [
+        -280,
+        -140
+      ]
     },
     {
       "parameters": {
@@ -200,7 +234,10 @@
       "name": "Validate Classification",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [-60, -140]
+      "position": [
+        -60,
+        -140
+      ]
     },
     {
       "parameters": {
@@ -231,27 +268,38 @@
       "name": "Classification Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [160, -140]
+      "position": [
+        160,
+        -140
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Classification passed schema validation — carry it forward.\nconst payload = $('Parse Classification').first().json.payload;\nreturn [{ json: {\n  kind: payload.kind,\n  materiality: payload.materiality,\n  summary: payload.summary,\n  title_en: payload.title_en ?? null,\n  cls_degraded: false,\n  cls_reason: null,\n} }];\n"
+        "jsCode": "// This candidate's classification passed schema validation — carry it forward.\nconst p = $('Parse Classification').item.json;\nreturn { json: {\n  cand_idx: p.cand_idx,\n  kind: p.payload.kind,\n  materiality: p.payload.materiality,\n  summary: p.payload.summary,\n  title_en: p.payload.title_en ?? null,\n  cls_degraded: false,\n  cls_reason: null,\n} };\n",
+        "mode": "runOnceForEachItem"
       },
       "id": "code-classify-ok",
       "name": "Classification OK",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [380, -260]
+      "position": [
+        380,
+        -260
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// One automatic retry with a stricter instruction (§9.4); the /validate errors\n// are quoted back to the model.\nconst base = $('Build Classify Prompt').first().json;\nconst errors = $json.errors || [];\nconst prompt = base.prompt\n  + '\\n\\nYour previous response was rejected by schema validation: '\n  + JSON.stringify(errors)\n  + '\\nRespond again with ONLY the JSON object described above — no prose, no markdown '\n  + 'fences, no extra keys. kind and materiality MUST use exactly the allowed enum values.';\nreturn [{ json: { prompt } }];\n"
+        "jsCode": "// One automatic retry per candidate with a stricter instruction (§9.4); the\n// /validate errors are quoted back to the model.\nconst base = $('Build Classify Prompt').item.json;\nconst errors = $json.errors || [];\nconst prompt = base.prompt\n  + '\\n\\nYour previous response was rejected by schema validation: '\n  + JSON.stringify(errors)\n  + '\\nRespond again with ONLY the JSON object described above — no prose, no markdown '\n  + 'fences, no extra keys. kind and materiality MUST use exactly the allowed enum values.';\nreturn { json: { cand_idx: base.cand_idx, prompt } };\n",
+        "mode": "runOnceForEachItem"
       },
       "id": "code-classify-stricter",
       "name": "Build Stricter Classify",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [380, -20]
+      "position": [
+        380,
+        -20
+      ]
     },
     {
       "parameters": {
@@ -262,18 +310,25 @@
       "name": "Classify (Retry)",
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
       "typeVersion": 1.5,
-      "position": [600, -20],
+      "position": [
+        600,
+        -20
+      ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Parse the raw LLM text into a candidate payload for POST /validate.\n// A parse failure is NOT swallowed — it becomes an invalid payload so the\n// validate -> retry -> degraded path handles it (§9.4).\nconst raw = ($json.text ?? '').toString().trim()\n  .replace(/^```(?:json)?\\s*/i, '')\n  .replace(/```\\s*$/, '');\nlet payload;\ntry {\n  payload = JSON.parse(raw);\n} catch (e) {\n  payload = { _parse_error: String(e) };\n}\nif (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {\n  payload = { _not_an_object: true };\n}\nreturn [{ json: { agent: 'earnings', payload, raw } }];\n"
+        "jsCode": "// Parse the stricter retry for one candidate (§9.4).\nconst raw = ($json.text ?? '').toString().trim()\n  .replace(/^```(?:json)?\\s*/i, '')\n  .replace(/```\\s*$/, '');\nlet payload;\ntry {\n  payload = JSON.parse(raw);\n} catch (e) {\n  payload = { _parse_error: String(e) };\n}\nif (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {\n  payload = { _not_an_object: true };\n}\nreturn { json: { agent: 'earnings', cand_idx: $('Build Stricter Classify').item.json.cand_idx, payload, raw } };\n",
+        "mode": "runOnceForEachItem"
       },
       "id": "code-parse-classify-retry",
       "name": "Parse Classification (Retry)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [820, -20]
+      "position": [
+        820,
+        -20
+      ]
     },
     {
       "parameters": {
@@ -288,7 +343,10 @@
       "name": "Validate Classification (Retry)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1040, -20]
+      "position": [
+        1040,
+        -20
+      ]
     },
     {
       "parameters": {
@@ -319,37 +377,51 @@
       "name": "Classification Retry Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1260, -20]
+      "position": [
+        1260,
+        -20
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const payload = $('Parse Classification (Retry)').first().json.payload;\nreturn [{ json: {\n  kind: payload.kind,\n  materiality: payload.materiality,\n  summary: payload.summary,\n  title_en: payload.title_en ?? null,\n  cls_degraded: false,\n  cls_reason: null,\n} }];\n"
+        "jsCode": "const p = $('Parse Classification (Retry)').item.json;\nreturn { json: {\n  cand_idx: p.cand_idx,\n  kind: p.payload.kind,\n  materiality: p.payload.materiality,\n  summary: p.payload.summary,\n  title_en: p.payload.title_en ?? null,\n  cls_degraded: false,\n  cls_reason: null,\n} };\n",
+        "mode": "runOnceForEachItem"
       },
       "id": "code-classify-ok-retry",
       "name": "Classification OK (Retry)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1480, -140]
+      "position": [
+        1480,
+        -140
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Classification failed validation twice — degrade the classified fields only\n// (§9.4). Extraction still runs on the verbatim text; nothing is guessed.\nlet errors = [];\ntry { errors = $('Validate Classification (Retry)').first().json.errors || []; } catch (e) { /* retry never ran */ }\nreturn [{ json: {\n  kind: null,\n  materiality: null,\n  summary: '',\n  title_en: null,\n  cls_degraded: true,\n  cls_reason: 'classification failed schema validation after one stricter retry'\n    + (errors.length ? ` (${errors.join('; ')})` : ''),\n} }];\n"
+        "jsCode": "// This candidate failed validation twice — degrade its classified fields only\n// (§9.4). It can still be selected if nothing else classified, in which case\n// extraction runs on the verbatim text and nothing is guessed.\nconst errors = $json.errors || [];\nreturn { json: {\n  cand_idx: $('Build Stricter Classify').item.json.cand_idx,\n  kind: null,\n  materiality: null,\n  summary: '',\n  title_en: null,\n  cls_degraded: true,\n  cls_reason: 'classification failed schema validation after one stricter retry'\n    + (errors.length ? ` (${errors.join('; ')})` : ''),\n} };\n",
+        "mode": "runOnceForEachItem"
       },
       "id": "code-classify-degraded",
       "name": "Classification Degraded",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1480, 100]
+      "position": [
+        1480,
+        100
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Emit three identical extraction tasks (§3.2 self-consistency, n=3). The\n// single Extract chain below runs once per item at temperature 0.3 = three\n// independent samples. The classification result rides along for the vote\n// and assemble nodes, whichever classification terminal fired.\nconst cls = $json;\nconst c = $('Prep Fetch').first().json;\nconst latest = c.items[0];\nconst prompt = [\n  `You are extracting headline financial figures from a TASE (Maya) disclosure about ${c.ticker}.`,\n  'Fields: revenue, eps, guidance.',\n  'Rules:',\n  '- A value must be copied VERBATIM (character-for-character, including currency symbol and units) from the text below.',\n  '- If a figure is not stated explicitly in the text, use null for that field.',\n  '- NEVER compute, convert, sum, infer, or guess a number. For Hebrew text, copy the figure exactly as written; do not translate units.',\n  '',\n  'Text:',\n  `title: ${latest.title}`,\n  `text: ${latest.excerpt || '(no further text available)'}`,\n  '',\n  'Respond with ONLY a JSON object, no markdown fences, exactly this shape:',\n  '{\"revenue\":<string or null>,\"eps\":<string or null>,\"guidance\":<string or null>}',\n].join('\\n');\nreturn [1, 2, 3].map(n => ({ json: { sample: n, prompt, classification: cls } }));\n"
+        "jsCode": "// Emit three identical extraction tasks (§3.2 self-consistency, n=3) for the\n// SELECTED disclosure. The single Extract chain below runs once per item at\n// temperature 0.3 = three independent samples. The selection + its classification\n// ride along for the vote and assemble nodes.\nconst pick = $json;\nconst c = $('Prep Fetch').first().json;\nconst sel = c.items[pick.selected.cand_idx];\nconst prompt = [\n  `You are extracting headline financial figures from a TASE (Maya) disclosure about ${c.ticker}.`,\n  'Fields: revenue, eps, guidance.',\n  'Rules:',\n  '- A value must be copied VERBATIM (character-for-character, including currency symbol and units) from the text below.',\n  '- If a figure is not stated explicitly in the text, use null for that field.',\n  '- NEVER compute, convert, sum, infer, or guess a number. For Hebrew text, copy the figure exactly as written; do not translate units.',\n  '',\n  'Text:',\n  `title: ${sel.title}`,\n  `text: ${sel.excerpt || '(no further text available)'}`,\n  '',\n  'Respond with ONLY a JSON object, no markdown fences, exactly this shape:',\n  '{\"revenue\":<string or null>,\"eps\":<string or null>,\"guidance\":<string or null>}',\n].join('\\n');\nreturn [1, 2, 3].map(n => ({ json: {\n  sample: n,\n  prompt,\n  classification: pick.selected,\n  considered: pick.considered,\n  n_classified: pick.n_classified,\n} }));\n"
       },
       "id": "code-make-samples",
       "name": "Make 3 Samples",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1700, -20]
+      "position": [
+        1700,
+        -20
+      ]
     },
     {
       "parameters": {
@@ -362,7 +434,10 @@
       "name": "OpenRouter Haiku (t=0.3)",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
       "typeVersion": 1,
-      "position": [2140, 220],
+      "position": [
+        2140,
+        220
+      ],
       "credentials": {
         "openRouterApi": {
           "id": "REPLACE_AFTER_IMPORT",
@@ -379,7 +454,10 @@
       "name": "Extract (n=3)",
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
       "typeVersion": 1.5,
-      "position": [1920, -20],
+      "position": [
+        1920,
+        -20
+      ],
       "onError": "continueRegularOutput"
     },
     {
@@ -391,7 +469,10 @@
       "name": "Parse Samples",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2140, -20]
+      "position": [
+        2140,
+        -20
+      ]
     },
     {
       "parameters": {
@@ -406,7 +487,10 @@
       "name": "Validate Samples",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2360, -20]
+      "position": [
+        2360,
+        -20
+      ]
     },
     {
       "parameters": {
@@ -437,7 +521,10 @@
       "name": "Sample Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [2580, -20]
+      "position": [
+        2580,
+        -20
+      ]
     },
     {
       "parameters": {
@@ -448,7 +535,10 @@
       "name": "Sample OK",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2800, -160]
+      "position": [
+        2800,
+        -160
+      ]
     },
     {
       "parameters": {
@@ -459,7 +549,10 @@
       "name": "Build Stricter Extract",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2800, 100]
+      "position": [
+        2800,
+        100
+      ]
     },
     {
       "parameters": {
@@ -470,7 +563,10 @@
       "name": "Extract (Retry)",
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
       "typeVersion": 1.5,
-      "position": [3020, 100],
+      "position": [
+        3020,
+        100
+      ],
       "onError": "continueRegularOutput"
     },
     {
@@ -482,7 +578,10 @@
       "name": "Parse Samples (Retry)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3240, 100]
+      "position": [
+        3240,
+        100
+      ]
     },
     {
       "parameters": {
@@ -497,7 +596,10 @@
       "name": "Validate Samples (Retry)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [3460, 100]
+      "position": [
+        3460,
+        100
+      ]
     },
     {
       "parameters": {
@@ -528,7 +630,10 @@
       "name": "Sample Retry Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [3680, 100]
+      "position": [
+        3680,
+        100
+      ]
     },
     {
       "parameters": {
@@ -539,7 +644,10 @@
       "name": "Sample OK (Retry)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3900, 0]
+      "position": [
+        3900,
+        0
+      ]
     },
     {
       "parameters": {
@@ -550,7 +658,10 @@
       "name": "Sample Void",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3900, 220]
+      "position": [
+        3900,
+        220
+      ]
     },
     {
       "parameters": {
@@ -560,17 +671,23 @@
       "name": "Majority Vote",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [4340, -20]
+      "position": [
+        4340,
+        -20
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Assemble the §3.2 output. The classification (or its degraded marker) rides\n// on Make 3 Samples; the voted figures arrive as $json. Any upstream failure\n// degrades status explicitly (§9.4) — never silently.\nconst c = $('Prep Fetch').first().json;\nconst cls = $('Make 3 Samples').first().json.classification;\nconst vote = $json;\nconst latest = c.items[0];\nconst dateOnly = latest.published_at ? String(latest.published_at).slice(0, 10) : null;\n\nconst degraded = Boolean(c.degraded_fetch || cls.cls_degraded || vote.n_valid === 0);\nconst parts = [];\nif (c.degraded_fetch) parts.push(c.fetch_summary || 'maya fetch degraded');\nif (cls.cls_degraded) parts.push(cls.cls_reason || 'classification degraded');\nif (vote.n_valid === 0) parts.push('all extraction samples failed validation');\nlet summary = cls.summary || `Disclosure: ${latest.title}`;\nif (parts.length) summary = 'degraded: ' + parts.join('; ') + (cls.summary ? ' — ' + cls.summary : '');\n\n// §3.4 reads \"earnings window\" as a recent results/guidance event: the latest\n// in-window disclosure is one of those kinds. Degraded classification cannot\n// assert a window.\nconst isWindow = !cls.cls_degraded && (cls.kind === 'earnings' || cls.kind === 'guidance');\n\nconst output = {\n  ticker: c.ticker,\n  latest_disclosure: {\n    date: dateOnly,\n    type: cls.cls_degraded ? null : cls.kind,\n    language: latest.language,\n    title: latest.title,\n    url: latest.url,\n    title_en: cls.title_en || null,\n    summary: cls.cls_degraded ? null : cls.summary,\n    extracted: vote.extracted,\n  },\n  is_earnings_window: isWindow,\n  materiality: cls.cls_degraded ? null : cls.materiality,\n  summary,\n  status: degraded ? 'degraded' : 'ok',\n};\n\n// Persist only the disclosure we actually classified/extracted (the latest).\nconst store_rows = [{\n  id: latest.id,\n  published_at: latest.published_at || null,\n  language: latest.language,\n  title: latest.title,\n  url: latest.url,\n  kind: cls.cls_degraded ? null : cls.kind,\n  materiality: cls.cls_degraded ? null : cls.materiality,\n  summary: cls.cls_degraded ? null : cls.summary,\n  extracted: vote.extracted,\n}];\n\nreturn [{ json: { output, store_rows, ticker: c.ticker } }];\n"
+        "jsCode": "// Assemble the §3.2 output. The selected classification (or its degraded marker)\n// and the considered list ride on Make 3 Samples; the voted figures arrive as\n// $json. Any upstream failure degrades status explicitly (§9.4) — never silently.\nconst c = $('Prep Fetch').first().json;\nconst ms = $('Make 3 Samples').first().json;\nconst cls = ms.classification;\nconst considered = ms.considered || [];\nconst vote = $json;\nconst sel = c.items[cls.cand_idx];\nconst dateOnly = sel.published_at ? String(sel.published_at).slice(0, 10) : null;\n\nconst degraded = Boolean(c.degraded_fetch || cls.cls_degraded || vote.n_valid === 0);\nconst parts = [];\nif (c.degraded_fetch) parts.push(c.fetch_summary || 'maya fetch degraded');\nif (cls.cls_degraded) parts.push(cls.cls_reason || 'classification degraded');\nif (vote.n_valid === 0) parts.push('all extraction samples failed validation');\nlet summary = cls.summary || `Disclosure: ${sel.title}`;\nif (parts.length) summary = 'degraded: ' + parts.join('; ') + (cls.summary ? ' — ' + cls.summary : '');\n\n// §3.4 reads \"earnings window\" as a recent results/guidance event: the selected\n// in-window disclosure is one of those kinds. Degraded classification cannot\n// assert a window.\nconst isWindow = !cls.cls_degraded && (cls.kind === 'earnings' || cls.kind === 'guidance');\n\nconst output = {\n  ticker: c.ticker,\n  selected_disclosure: {\n    date: dateOnly,\n    type: cls.cls_degraded ? null : cls.kind,\n    language: sel.language,\n    title: sel.title,\n    url: sel.url,\n    title_en: cls.title_en || null,\n    summary: cls.cls_degraded ? null : cls.summary,\n    extracted: vote.extracted,\n  },\n  considered,\n  is_earnings_window: isWindow,\n  materiality: cls.cls_degraded ? null : cls.materiality,\n  summary,\n  status: degraded ? 'degraded' : 'ok',\n};\n\n// Persist only the disclosure we actually classified/extracted (the selected one).\nconst store_rows = [{\n  id: sel.id,\n  published_at: sel.published_at || null,\n  language: sel.language,\n  title: sel.title,\n  url: sel.url,\n  kind: cls.cls_degraded ? null : cls.kind,\n  materiality: cls.cls_degraded ? null : cls.materiality,\n  summary: cls.cls_degraded ? null : cls.summary,\n  extracted: vote.extracted,\n}];\n\nreturn [{ json: { output, store_rows, ticker: c.ticker } }];\n"
       },
       "id": "code-assemble",
       "name": "Assemble Output",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [4560, -20]
+      "position": [
+        4560,
+        -20
+      ]
     },
     {
       "parameters": {
@@ -585,7 +702,10 @@
       "name": "Persist Earnings",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [4780, -20],
+      "position": [
+        4780,
+        -20
+      ],
       "onError": "continueRegularOutput"
     },
     {
@@ -596,7 +716,23 @@
       "name": "Finalize",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [5000, -20]
+      "position": [
+        5000,
+        -20
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// §3.2 step 3: select which classified candidate the agent actually reports.\n// The newest filing is usually administrative, and the server-side rank only\n// decided who got classified — the choice itself is made here, from the model's\n// own kind/materiality, so a mis-ranked candidate simply loses.\n// Highest materiality wins; ties break by kind, then recency. A degraded\n// classification scores 0 and can only win if nothing else classified at all.\nconst c = $('Prep Fetch').first().json;\nconst cls = $input.all().map(i => i.json);\n\nconst MAT = { high: 3, medium: 2, low: 1 };\nconst KIND = { earnings: 4, guidance: 3, material_event: 2, other: 1 };\nconst when = (x) => {\n  const it = c.items[x.cand_idx];\n  return (it && it.published_at) || '';\n};\nconst score = (x) => (x.cls_degraded ? 0 : (MAT[x.materiality] || 0));\n\nconst ranked = [...cls].sort((a, b) => {\n  const m = score(b) - score(a);\n  if (m) return m;\n  const k = (KIND[b.kind] || 0) - (KIND[a.kind] || 0);\n  if (k) return k;\n  return String(when(b)).localeCompare(String(when(a)));\n});\n\nconst selected = ranked[0];\n// Everything classified but not selected — the §3.2 audit trail for the choice.\nconst considered = ranked.slice(1).map((x) => {\n  const it = c.items[x.cand_idx] || {};\n  return {\n    date: it.published_at ? String(it.published_at).slice(0, 10) : null,\n    title: it.title || '',\n    url: it.url || '',\n    kind: x.cls_degraded ? null : x.kind,\n    materiality: x.cls_degraded ? null : x.materiality,\n  };\n});\n\nreturn [{ json: { selected, considered, n_classified: cls.length } }];\n"
+      },
+      "id": "code-pick-material",
+      "name": "Pick Most Material",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1590,
+        -20
+      ]
     }
   ],
   "connections": {
@@ -767,7 +903,7 @@
       "main": [
         [
           {
-            "node": "Make 3 Samples",
+            "node": "Pick Most Material",
             "type": "main",
             "index": 0
           }
@@ -840,7 +976,7 @@
       "main": [
         [
           {
-            "node": "Make 3 Samples",
+            "node": "Pick Most Material",
             "type": "main",
             "index": 0
           }
@@ -851,7 +987,7 @@
       "main": [
         [
           {
-            "node": "Make 3 Samples",
+            "node": "Pick Most Material",
             "type": "main",
             "index": 0
           }
@@ -1042,6 +1178,17 @@
         [
           {
             "node": "Finalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Most Material": {
+      "main": [
+        [
+          {
+            "node": "Make 3 Samples",
             "type": "main",
             "index": 0
           }

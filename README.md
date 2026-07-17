@@ -414,6 +414,14 @@ instance must have been started with the two variables above.
   Python `duckdb` that wrote it (`python -c "import duckdb; print(duckdb.__version__)"`).
 - **Maya scrape is TTL-cached** for 10 minutes, so an orchestrator run scrapes once, not once
   per ticker.
+- **The Earnings agent classifies the top 3 disclosures, not the newest one.** A ticker's newest
+  filing is almost always administrative — a Form 4, an "Opening of Trading" notice — while the
+  results sit far below (Teva's Q1 8-K was 31 rows down; Elbit's newest was a *"we will report on
+  Aug 5"* notice with the actual Q1 results 7 rows below). `/earnings/fetch` ranks disclosures by
+  title and excerpts the top `earnings_candidates` (`config/universe.yaml`, default 3); the agent
+  classifies each and reports the most material. Ranking is *retrieval, not classification* — the
+  score never becomes `kind`/`materiality`, so a mis-ranked candidate is just classified `other/low`
+  and loses. Figures are extracted from the winner only: 3 classify + 3 extract calls per ticker.
 - **Earnings figures come from the disclosure's PDF, not its report page.** Maya publishes a
   disclosure in three layers and only the last has numbers: the report page is an SPA shell
   (its visible text is navigation, the report list, and a live stock quote); its iframe holds a

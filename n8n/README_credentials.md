@@ -160,13 +160,25 @@ The classified disclosure + voted figures are written to the `earnings` table
 via `POST /earnings/store`.
 
 Output (§3.2 + §3.4 status):
-`{ ticker, latest_disclosure{date,type,language,title,url,title_en,summary,extracted}, is_earnings_window, materiality, summary, status }`.
+`{ ticker, selected_disclosure{date,type,language,title,url,title_en,summary,extracted}, considered[{date,title,url,kind,materiality}], is_earnings_window, materiality, summary, status }`.
 
-Three terminal states: `ok` with a classified disclosure; `ok` with
-`latest_disclosure: null` when the scrape is healthy but nothing matched the
-window (never padded); and `degraded` (with a reason) when the scrape, an LLM
-boundary, or the `earnings` write fails. Cost logging happens at the orchestrator
-level (`/costs/harvest`, §9.4).
+**The agent classifies the top 3 candidates, not just the newest filing.** A
+ticker's newest disclosure is usually administrative (a Form 4, a trading
+notice), so `/earnings/fetch` returns disclosures ranked by relevance and
+excerpts the top `earnings_candidates` (`config/universe.yaml`, default 3).
+*Build Classify Prompt* emits one item per candidate, the *Classify* chain runs
+once per item, and *Pick Most Material* selects the winner from the model's own
+`kind`/`materiality` — the server-side rank only chooses who gets asked, so a
+mis-ranked candidate simply loses. Self-consistency then extracts figures from
+the winner alone: 3 classify + 3 extract calls per ticker.
+`selected_disclosure` is that winner; `considered` lists the classified-but-
+rejected candidates as the audit trail for the choice.
+
+Three terminal states: `ok` with a selected disclosure; `ok` with
+`selected_disclosure: null` and `considered: []` when the scrape is healthy but
+nothing matched the window (never padded); and `degraded` (with a reason) when
+the scrape, an LLM boundary, or the `earnings` write fails. Cost logging happens
+at the orchestrator level (`/costs/harvest`, §9.4).
 
 ### Risk Manager (`agents/risk_manager.json`, Step 7)
 
