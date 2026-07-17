@@ -1,8 +1,18 @@
-# S&P 500 Integration Plan (proposed — post-Step-13)
+# S&P 500 Integration Plan (build Steps 13–14, after the chat assistant)
 
-> **Status: proposed future work, not yet part of the design.** `docs/design.md` remains
-> the source of truth and is TA-35-only until Step 14 below amends it. Do not start this
-> work before Step 13 (chat assistant) is complete and reviewed.
+> **Status: scheduled as CLAUDE.md build Steps 13–14**, between Step 12 (chat assistant) and
+> Step 15 (README). `docs/design.md` remains the source of truth and is TA-35-only until
+> Step 13 below amends it (doc wins). Do not start this work before Step 12 (chat assistant)
+> is complete and reviewed. Both steps are a scope extension, not part of the graded
+> deliverable — if either stalls, drop it and go straight to Step 15 (README).
+>
+> **Scoping note.** This plan was originally drafted as five steps (14–18). It is now built as
+> **two** CLAUDE.md steps, split on whether a piece is verifiable offline or needs a live SEC
+> filing: **Step 13** = the market abstraction + everything offline-verifiable (design amendment,
+> config, calendar/ingestion, news-group routing, per-market schedule gate); **Step 14** = the
+> SEC EDGAR earnings source + report currency, the piece gated on a live filing. The
+> section-C step numbers below (14–18) are retained as sub-references so the mapping to the
+> original design is traceable; the two CLAUDE.md steps bundle them as noted.
 
 Approved direction (2026-07-13):
 
@@ -46,7 +56,7 @@ markets:
 
 The rubric, Risk Manager, dual-sentiment mechanism, schemas, costs, and evals are **market-agnostic and unchanged**. FinBERT/HeBERT routing already handles US news correctly (everything is EN → FinBERT; HeBERT simply never fires).
 
-## B. Design-doc amendment (Step 14 — doc first)
+## B. Design-doc amendment (done first, inside build Step 13 — doc wins)
 
 Section-by-section changes to `docs/design.md`:
 
@@ -62,23 +72,29 @@ Section-by-section changes to `docs/design.md`:
 
 ## C. Build steps (CLAUDE.md style — one step, stop, review)
 
-**Step 14 — Design amendment + market config schema.**
+> **Bundled into two CLAUDE.md steps.** Build **Step 13** = original sub-steps 14 + 15 + 17
+> (all offline-verifiable: design amendment, market config, calendar/ingestion, news feeds,
+> per-market schedule gate) and the report/eval-doc work folds into build **Step 15** (README);
+> build **Step 14** = original sub-step 16 (EDGAR) plus the report currency/market rendering.
+> The original sub-step headings are kept below for traceability.
+
+**Step 14 (→ build Step 13) — Design amendment + market config schema.**
 Amend design.md per (B); restructure `config/universe.yaml` (`markets:` block, keyed `rss_feeds`, market-derivation rule); add a `market(symbol)` helper (new `quant_service/data/markets.py`: suffix → market, plus accessor for the market's config). No behavior change for the existing TA-35 flow.
 *Verify:* existing smoke test still green; `market("TEVA.TA")=="tase"`, `market("AAPL")=="us"`.
 
-**Step 15 — Market-aware calendar + ingestion.**
+**Step 15 (→ build Step 13) — Market-aware calendar + ingestion.**
 `data/yahoo.py`: replace `TASE_CLOSED_WEEKDAYS`/`_tase_sessions` with a per-market closed-weekday grid from `markets.py`; `data/cache.py` gap heuristics take the market's weekend length. `prices` table unchanged (symbol is already the key).
 *Verify:* ingest `AAPL` — Fridays present, no Sunday rows; ingest `TEVA.TA` — unchanged vs. current output (regression check on an existing symbol).
 
-**Step 16 — EDGAR earnings source.**
+**Step 16 (→ build Step 14) — EDGAR earnings source.**
 New `data/edgar.py`: ticker→CIK from `company_tickers.json` (cached), recent filings from `data.sec.gov/submissions/CIK##########.json`, filter to 8-K/10-Q/10-K within `earnings_window_days`, pull the press-release exhibit (EX-99.*) text for the newest item as the bounded `excerpt`. Plain `httpx` — no Playwright. Declared `User-Agent` (contact email) per SEC policy; TTL-cache like Maya. `/earnings/fetch` routes by `market(ticker)`; response contract unchanged so the n8n Earnings Agent sub-workflow needs **no changes**. Failure degrades, never 500s.
 *Verify:* `/earnings/fetch` for `AAPL` right after a real filing returns items with an excerpt; the agent commits only verbatim figures (`confidence: 3`) and marks absent ones `ambiguous`; `TEVA.TA` still routes to Maya.
 
-**Step 17 — News feeds + per-market schedule gate.**
+**Step 17 (→ build Step 13) — News feeds + per-market schedule gate.**
 `/news/fetch` selects RSS groups by the ticker's market (NewsAPI path unchanged); add the `en_us` feeds and US `search_terms`. Schedule gate: `/runs/start` (scheduled mode only) filters the watchlist to in-session markets via `markets.trading_hours`; empty ⇒ orchestrator exits before writing anything. Gate placement (service vs. pre-call n8n gate) depends on how Step 10 lands — decide then. Widen `schedule_cron`.
 *Verify:* scheduled run at 20:00 Israel time analyzes only US names; at 11:00 only TASE names; manual/chat runs are never filtered.
 
-**Step 18 — Report + docs + eval.**
+**Step 18 (→ build Step 14 for report; docs/eval fold into build Step 15) — Report + docs + eval.**
 Report template: market/currency per ticker page, market-grouped executive summary. README: markets section, updated limitations. Optional: extend `eval/earnings_labeled.jsonl` with 3–5 EDGAR disclosures and `eval/sentiment_labeled.jsonl` with US items.
 *Verify:* one mixed-watchlist run (`["TEVA.TA","AAPL"]`) produces a single PDF with both tickers, correct currencies, and a market-grouped summary; `runs`/`recommendations`/`costs` rows all present.
 

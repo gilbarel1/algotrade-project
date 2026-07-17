@@ -288,7 +288,7 @@ n8n_workflow_ids:
   sentiment: "KnV1HngeDrOcVcqH"
   earnings: "7SU3ioCng1HsFMkl"
   risk_manager: "NgajAcDX26YE3i98"
-  # chat: "<id>"   # §6.5 chat assistant — added in Step 13 so its tokens reach `costs`
+  # chat: "<id>"   # §6.5 chat assistant — added in Step 12 so its tokens reach `costs`
 ```
 
 `config/rubric.yaml` holds the Risk Manager rubric thresholds.
@@ -609,7 +609,7 @@ A small evaluation harness ships with the system; results live in DuckDB (`evals
 n8n-investment-team/
 ├── n8n/
 │   ├── orchestrator.workflow.json
-│   ├── chat_assistant.workflow.json   # §6.5 Chat Trigger -> AI Agent (router only); Step 13
+│   ├── chat_assistant.workflow.json   # §6.5 Chat Trigger -> AI Agent (router only); Step 12
 │   ├── agents/ {sentiment,earnings,technical,risk_manager}.json
 │   └── README_credentials.md
 ├── quant_service/

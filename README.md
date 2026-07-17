@@ -300,15 +300,17 @@ Built and reviewed **one step at a time** (detail in `CLAUDE.md`).
 | 9 | `/report` real (WeasyPrint + Jinja2) | ✅ done |
 | 10 | Schedule trigger gated by TASE hours | ✅ done |
 | 11 | Evaluation harness (`python -m eval.run`) | ⬜ |
-| 13 | Chat assistant front end (bonus, §6.5) | ⬜ |
-| 12 | README + supporting docs for a grader | ⬜ |
+| 12 | Chat assistant front end (bonus, §6.5) | ⬜ |
+| 13 | S&P 500 market abstraction (config + calendar + news/schedule gate) | ⬜ |
+| 14 | SEC EDGAR earnings source + report currency | ⬜ |
+| 15 | README + supporting docs for a grader | ⬜ |
 
-Steps 13 and 12 are intentionally built in that order: Step 12 is the grader-facing README and
-demo docs, so it is written once, last, with the chat assistant already in place.
+Step 15 (README) is intentionally last: it is the grader-facing README and demo docs, so it is
+written once, at the end, with the chat assistant (Step 12) and S&P 500 support (Steps 13–14)
+already in place.
 
-**Future work (after Step 12):** S&P 500 support — mixed TA-35 + S&P watchlist, SEC EDGAR
-earnings, per-market schedule gate. Approved plan:
-[`docs/sp500_integration_plan.md`](docs/sp500_integration_plan.md).
+**S&P 500 support (Steps 13–14):** mixed TA-35 + S&P watchlist, SEC EDGAR earnings, per-market
+schedule gate. Full plan: [`docs/sp500_integration_plan.md`](docs/sp500_integration_plan.md).
 
 ---
 
