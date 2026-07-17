@@ -172,7 +172,7 @@
     },
     {
       "parameters": {
-        "model": "anthropic/claude-haiku-4.5",
+        "model": "x-ai/grok-4.3",
         "options": {
           "temperature": 0
         }
@@ -425,7 +425,7 @@
     },
     {
       "parameters": {
-        "model": "anthropic/claude-haiku-4.5",
+        "model": "x-ai/grok-4.3",
         "options": {
           "temperature": 0.3
         }

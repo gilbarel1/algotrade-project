@@ -138,8 +138,9 @@ the Playwright browser once: `python -m playwright install chromium`.
 
 Flow (§3.2): `POST /earnings/fetch` (Maya EN page rendered server-side in
 headless Chromium, HE fallback, §4.3 cleaning; returns compact items — the
-newest with a bounded text excerpt — **and** the few-shot examples from
-`prompts/earnings_examples.jsonl`) → two LLM boundaries, both Claude Haiku 4.5:
+top-ranked candidates each with a bounded text excerpt from the disclosure's PDF
+attachment — **and** the few-shot examples from
+`prompts/earnings_examples.jsonl`) → two LLM boundaries, both `x-ai/grok-4.3`:
 
 - **Classify/translate** (temperature 0) — `kind`, `materiality`, English
   `summary`, and `title_en` for Hebrew titles → `POST /validate` (agent

@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 PRICES_PER_1M: Dict[str, tuple[float, float]] = {
     "anthropic/claude-haiku-4.5": (1.00, 5.00),
     "google/gemini-2.5-flash-lite": (0.10, 0.40),
+    "x-ai/grok-4.3": (1.25, 2.50),
 }
 
 

@@ -36,7 +36,7 @@ flowchart TD
     T2[Schedule Trigger<br/>hourly, TASE hours] --> ORC
 
     ORC -->|fan out per ticker| SA[Sentiment Agent<br/>claude-haiku-4.5 + FinBERT/HeBERT]
-    ORC -->|fan out per ticker| EA[Earnings Agent<br/>claude-haiku-4.5 + self-consistency]
+    ORC -->|fan out per ticker| EA[Earnings Agent<br/>grok-4.3 + self-consistency]
     ORC -->|fan out per ticker| TA[Technical Agent<br/>gemini-2.5-flash-lite]
 
     SA -->|HTTP| QS
@@ -535,11 +535,13 @@ The system intentionally combines four AI techniques beyond baseline LLM calls. 
 | Agent                     | OpenRouter model                 | Price (per 1M tokens) | Why                                                      |
 | ------------------------- | -------------------------------- | --------------------- | -------------------------------------------------------- |
 | Sentiment                 | `anthropic/claude-haiku-4.5`   | $1 in / $5 out        | Multi-headline reading, translation, few-shot scoring    |
-| Earnings                  | `anthropic/claude-haiku-4.5`   | $1 in / $5 out        | Translation, careful extraction with self-consistency    |
+| Earnings                  | `x-ai/grok-4.3`                | $1.25 in / $2.50 out  | Translation, careful extraction with self-consistency    |
 | Technical                 | `google/gemini-2.5-flash-lite` | $0.10 in / $0.40 out  | Narrates a pre-computed JSON; no reasoning required      |
 | Risk Manager (×3 passes) | `anthropic/claude-haiku-4.5`   | $1 in / $5 out        | Cross-agent synthesis, critique, and final justification |
 
 Per-run cost for a five-ticker watchlist is roughly $0.04–$0.08 (the critique loop triples the Risk Manager's call count). All token usage is logged to `costs` per run/agent. Any agent's model is a one-field change to upgrade — Risk Manager promotion to `anthropic/claude-sonnet-4-6` is the natural fallback if rationale quality is insufficient.
+
+The Earnings agent runs `x-ai/grok-4.3` rather than Haiku 4.5. Note that this is **not** a saving for this agent. Grok's output is half Haiku's price but its input is 25% dearer, so it only wins when a call's input is under ~10× its output. The Earnings agent sits on the wrong side of that line: each of the three ranked candidates carries a PDF excerpt of up to 6,000 characters (and the winning excerpt is re-sent once per self-consistency sample), while every response is short JSON. A representative 10k-in/500-out classify call costs $0.01375 on Grok against $0.01250 on Haiku — about 10% more. The swap is therefore justified on extraction quality, not price; `costs` per run/agent is the arbiter.
 
 ---
 
