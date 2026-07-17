@@ -177,8 +177,8 @@
           "temperature": 0
         }
       },
-      "id": "lm-haiku-t0",
-      "name": "OpenRouter Haiku (t=0)",
+      "id": "lm-grok-t0",
+      "name": "OpenRouter Grok (t=0)",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
       "typeVersion": 1,
       "position": [
@@ -430,8 +430,8 @@
           "temperature": 0.3
         }
       },
-      "id": "lm-haiku-t03",
-      "name": "OpenRouter Haiku (t=0.3)",
+      "id": "lm-grok-t03",
+      "name": "OpenRouter Grok (t=0.3)",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
       "typeVersion": 1,
       "position": [
@@ -830,7 +830,7 @@
         ]
       ]
     },
-    "OpenRouter Haiku (t=0)": {
+    "OpenRouter Grok (t=0)": {
       "ai_languageModel": [
         [
           {
@@ -846,7 +846,7 @@
         ]
       ]
     },
-    "OpenRouter Haiku (t=0.3)": {
+    "OpenRouter Grok (t=0.3)": {
       "ai_languageModel": [
         [
           {
