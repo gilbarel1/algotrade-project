@@ -335,6 +335,12 @@ earnings, per-market schedule gate. Approved plan:
 - **Maya (earnings) scraping fails sometimes.** Expected, and honest: Maya sits behind bot
   protection, so `/earnings/fetch` may return a `degraded:` summary. The agent then reports "no
   recent disclosure" rather than guessing — it never fabricates figures.
+- **Earnings figures all show `ambiguous`?** If you pulled an older checkout, re-run
+  `npm run setup` (or `pip install -r quant_service/requirements.txt`): figure extraction needs
+  the new `pypdf` dependency. Without it `/earnings/fetch` still works but falls back to the
+  report page, which carries no figures — so every field correctly votes `ambiguous`. Note that
+  `ambiguous` is also the *right* answer for a disclosure that genuinely states no figures (a
+  meeting notice, a rating affirmation).
 - **PowerShell `curl` is not curl** — it's an alias for `Invoke-WebRequest`, which rejects
   `-X`/`-H`/`-d` and yields a confusing **422**. Use `npm run smoke`, `Invoke-RestMethod`, or
   `curl.exe`.
@@ -408,6 +414,15 @@ instance must have been started with the two variables above.
   Python `duckdb` that wrote it (`python -c "import duckdb; print(duckdb.__version__)"`).
 - **Maya scrape is TTL-cached** for 10 minutes, so an orchestrator run scrapes once, not once
   per ticker.
+- **Earnings figures come from the disclosure's PDF, not its report page.** Maya publishes a
+  disclosure in three layers and only the last has numbers: the report page is an SPA shell
+  (its visible text is navigation, the report list, and a live stock quote); its iframe holds a
+  ~1 KB cover sheet naming an attachment; the attachment — `mayafiles.tase.co.il/rpdf/…` — is
+  the press release carrying revenue, EPS and guidance. `data/maya.py: _pdf_excerpt()` fetches
+  that PDF and extracts text (`pypdf`). Because a results PDF opens with several pages of
+  SEC/MAGNA boilerplate, the excerpt is *anchored* on the first page holding real currency
+  figures rather than the document's start. Unreachable or scanned PDFs (no text layer) degrade
+  to the cover sheet, and figures come out `ambiguous` — never invented.
 - **`WeasyPrint` on Windows (Step 9) needs the GTK3 runtime.** `pip install weasyprint`
   provides the Python package but not its native libraries, so the first render (or
   `import weasyprint`) fails with `cannot load library 'libgobject-2.0-0.dll'`. Install the

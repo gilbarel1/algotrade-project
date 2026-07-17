@@ -28,13 +28,26 @@ degrades):
 Results are TTL-cached per (ticker, window) so re-runs inside an orchestrator
 cycle don't relaunch browsers. §4.3: dedupe by (symbol, url) →
 id = sha1("symbol|url"). The newest matching disclosure also gets a bounded
-plain-text `excerpt` of its detail page (fetched in the same browser session) —
-the verbatim source for the §3.2 self-consistency extraction.
+plain-text `excerpt` — the verbatim source for the §3.2 self-consistency
+extraction.
+
+**The excerpt comes from the disclosure's PDF attachment, not its report page.**
+Maya publishes a disclosure across three layers and only the last has figures
+(§3.2): the report page is an SPA shell whose visible text is navigation, the
+report-list sidebar and a live stock quote; its iframe holds a ~1 KB MAGNA cover
+sheet naming an attachment; the attachment itself — `mayafiles.tase.co.il/rpdf/
+<bucket>/P<id>-00.pdf` — is the press release carrying revenue, EPS and
+guidance. Reading only the page (as this module originally did) yields an
+excerpt in which no figure is ever present, so every field votes "ambiguous" and
+§3.2's self-consistency never commits — intact, but never exercised. Worse, that
+page text *does* contain decoy numbers (the quote's "Last Rate"), so the vote is
+actively rejecting plausible wrong answers. See `_pdf_excerpt`.
 """
 
 from __future__ import annotations
 
 import hashlib
+import io
 import re
 import threading
 import time
@@ -53,9 +66,42 @@ _DETAILS_PREFIX = {
     "he": "https://maya.tase.co.il/reports/details/",
 }
 
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/126.0.0.0 Safari/537.36"
+)
+
+# The disclosure's PDF attachment — the only layer carrying financial figures
+# (§3.2). Served by a plain file host (no Imperva), so httpx suffices; the
+# report id's bucket is its enclosing 1000 (1737984 -> "1737001-1738000").
+_PDF_URL = "https://mayafiles.tase.co.il/rpdf/{bucket}/P{rid}-00.pdf"
+_REPORT_ID_RE = re.compile(r"/reports/(?:details/)?(\d+)")
+_PDF_TIMEOUT_S = 60
+
+# A currency amount with a magnitude word, or an explicit per-share figure.
+# Deliberately strict: it selects *where in the PDF the excerpt starts*, so a
+# loose pattern would anchor on legal boilerplate ("Form S-8", "Rule 13a-16")
+# instead of the results summary (verified against NICE's Q1 6-K).
+# Hebrew is matched too (§3.2 HE fallback): there the magnitude word *follows*
+# the number ("1.5 מיליארד ₪"), and the majority vote already normalizes those
+# units — an EN-only pattern would leave a HE disclosure's figures unanchored
+# and every field "ambiguous" despite being present.
+_MONEY_RE = re.compile(
+    r"[$€₪]\s?\d[\d,]*(?:\.\d+)?\s*(?:billion|million|bn\b)"
+    r"|\d[\d,]*(?:\.\d+)?\s*(?:מיליון|מיליארד)"
+    r"|(?:EPS|earnings per share|רווח למניה)[^\n]{0,40}?[$€₪]?\s?\d+\.\d+",
+    re.I,
+)
+_PDF_MIN_MONEY_HITS = 3  # per page, to clear boilerplate false positives
+_PDF_PAGE_SPAN = 3  # pages kept from the anchor (highlights + outlook + tables)
+
 _PAGE_TIMEOUT_MS = 45_000
 _SETTLE_MS = 3_000  # extra wait after load for late XHRs / list hydration
-_EXCERPT_MAX = 2_000
+# Bound on the disclosure text that reaches the LLM (§2). Sized so a results
+# press release's highlights *and* its outlook/guidance block both fit — see
+# _pdf_excerpt; ~1.5k tokens, still far below any page's full text (30-90k chars).
+_EXCERPT_MAX = 6_000
 _TTL_SECONDS = 600
 _API_LIMIT = 30  # server-enforced maximum page size (verified live)
 _MAX_PAGES = 2  # per term; a single company rarely files >60 reports per window
@@ -115,14 +161,7 @@ def _scrape_ticker(
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=True)
             try:
-                context = browser.new_context(
-                    locale="en-US",
-                    user_agent=(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/126.0.0.0 Safari/537.36"
-                    ),
-                )
+                context = browser.new_context(locale="en-US", user_agent=_USER_AGENT)
                 page = context.new_page()
                 passive: List = []  # JSON bodies the SPA loads by itself
 
@@ -471,15 +510,97 @@ def _parse_date(raw: str) -> Optional[datetime]:
 # --------------------------------------------------------------------------
 
 
-def _fetch_excerpt(page, url: str) -> Tuple[str, List[str]]:
-    """Render the disclosure detail page (same session) and return its visible
-    text, bounded.
+def _report_id(url: str) -> Optional[str]:
+    """The numeric report id embedded in a Maya detail URL, if present."""
+    match = _REPORT_ID_RE.search(url or "")
+    return match.group(1) if match else None
 
-    This is the verbatim source the self-consistency extraction reads (§3.2);
-    it is capped at _EXCERPT_MAX chars so only short text ever reaches the LLM
-    (§2). Failure degrades to "" — extraction then sees just the title and
-    figures come out "ambiguous", never invented.
+
+def _pdf_bucket(report_id: str) -> str:
+    """The mayafiles directory for a report id: its enclosing 1000."""
+    low = ((int(report_id) - 1) // 1000) * 1000 + 1
+    return f"{low}-{low + 999}"
+
+
+def _pdf_excerpt(report_id: str) -> Tuple[str, List[str]]:
+    """Text of the disclosure's PDF attachment, windowed onto its figures (§3.2).
+
+    The report page itself carries no figures — they live in the attached press
+    release / financial statement (see §3.2 for the three layers). This fetches
+    that PDF and returns a bounded excerpt.
+
+    A results PDF opens with several pages of SEC/MAGNA cover boilerplate, so
+    the first _EXCERPT_MAX chars of the document would contain no figures at
+    all. The excerpt is therefore anchored on the first page carrying at least
+    _PDF_MIN_MONEY_HITS strict money matches — in practice the press release's
+    highlights page — and spans _PDF_PAGE_SPAN pages so the outlook/guidance
+    block that follows the quarter's figures is included too. A disclosure with
+    no such page (a meeting notice, a rating affirmation) has no headline
+    figures to find: it falls back to the document's opening pages, and the
+    §3.2 vote then marks every field "ambiguous" — which is the correct answer,
+    not a failure.
+
+    Never raises. Any failure returns ("", [reason]) and the caller falls back
+    to the rendered page; figures then come out "ambiguous", never invented.
     """
+    try:
+        import httpx  # local import: keeps module import cheap and optional
+        import pypdf
+    except ImportError as exc:  # noqa: BLE001
+        return "", [f"maya pdf: dependency missing ({exc})"]
+
+    url = _PDF_URL.format(bucket=_pdf_bucket(report_id), rid=report_id)
+    try:
+        from data import tls  # OS-trust context: corporate TLS interception
+
+        resp = httpx.get(
+            url,
+            timeout=_PDF_TIMEOUT_S,
+            follow_redirects=True,
+            verify=tls.ssl_context(),
+            headers={"User-Agent": _USER_AGENT},
+        )
+        if resp.status_code != 200 or not resp.content.startswith(b"%PDF-"):
+            return "", [f"maya pdf: {url} -> HTTP {resp.status_code}, not a PDF"]
+
+        reader = pypdf.PdfReader(io.BytesIO(resp.content))
+        pages = [(p.extract_text() or "") for p in reader.pages]
+    except Exception as exc:  # noqa: BLE001 - any fetch/parse failure degrades
+        return "", [f"maya pdf: {_reason(exc)}"]
+
+    if not any(p.strip() for p in pages):
+        # A scanned disclosure has no text layer; we do not OCR (§13).
+        return "", [f"maya pdf: no extractable text ({len(pages)} pages)"]
+
+    anchor = next(
+        (
+            n
+            for n, text in enumerate(pages)
+            if len(_MONEY_RE.findall(text)) >= _PDF_MIN_MONEY_HITS
+        ),
+        0,
+    )
+    window = "\n".join(pages[anchor : anchor + _PDF_PAGE_SPAN])
+    return clean_text(window, _EXCERPT_MAX), []
+
+
+def _fetch_excerpt(page, url: str) -> Tuple[str, List[str]]:
+    """Return the bounded verbatim disclosure text for the §3.2 extraction.
+
+    Prefers the PDF attachment (the only layer with financial figures — §3.2);
+    falls back to the rendered detail page, which yields the MAGNA cover text
+    at best. Capped at _EXCERPT_MAX so only short text reaches the LLM (§2).
+    Failure degrades to "" — extraction then sees just the title and figures
+    come out "ambiguous", never invented.
+    """
+    errors: List[str] = []
+    report_id = _report_id(url)
+    if report_id:
+        text, pdf_errors = _pdf_excerpt(report_id)
+        if text:
+            return text, pdf_errors
+        errors.extend(pdf_errors)
+
     try:
         page.goto(url, timeout=_PAGE_TIMEOUT_MS, wait_until="domcontentloaded")
         try:
@@ -488,6 +609,6 @@ def _fetch_excerpt(page, url: str) -> Tuple[str, List[str]]:
             pass
         page.wait_for_timeout(_SETTLE_MS)
         text = page.evaluate("() => document.body ? document.body.innerText : ''")
-        return clean_text(text or "", _EXCERPT_MAX), []
+        return clean_text(text or "", _EXCERPT_MAX), errors
     except Exception as exc:  # noqa: BLE001
-        return "", [f"maya excerpt: {_reason(exc)}"]
+        return "", errors + [f"maya excerpt: {_reason(exc)}"]

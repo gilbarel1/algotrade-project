@@ -24,6 +24,9 @@ feedparser
 truststore        # OS-native TLS trust for httpx (corporate-proxy CAs); verify stays on
 playwright        # Maya is a JS SPA behind bot protection; rendered headless (Step 6).
                   # One-time browser download: python -m playwright install chromium
+pypdf             # Maya disclosure figures live in the report's PDF attachment, not on
+                  # the report page (§3.2); text-extracted server-side. Read-only — the
+                  # report PDF is still *written* by WeasyPrint below.
 
 # PDF + charts (Step 9)
 weasyprint
