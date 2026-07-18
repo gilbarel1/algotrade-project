@@ -21,6 +21,30 @@
     },
     {
       "parameters": {
+        "workflowInputs": {
+          "values": [
+            { "name": "tickers", "type": "string" }
+          ]
+        }
+      },
+      "id": "trigger-chat",
+      "name": "When Executed by Another Workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-224, 20]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Chat-initiated runs (§6.5). `tickers` is an optional comma-separated string\n// supplied by the chat assistant's Call n8n Workflow Tool; when present it\n// overrides the config watchlist for this run only (/runs/start, §5), so an\n// ad-hoc single-ticker request reuses this identical pipeline. Omitted =>\n// the full watchlist, exactly like a manual run.\n//\n// Like the manual path, chat bypasses the TASE-hours gate: an on-demand\n// question should answer whatever the clock says.\nconst raw = $json.tickers;\nconst tickers = String(raw == null ? '' : raw)\n  .split(',')\n  .map((t) => t.trim())\n  .filter((t) => t.length > 0);\nreturn [{ json: { mode: 'chat', tickers: tickers.length ? tickers : null } }];"
+      },
+      "id": "code-set-mode-chat",
+      "name": "Set Mode (Chat)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [0, 20]
+    },
+    {
+      "parameters": {
         "rule": {
           "interval": [
             { "field": "cronExpression", "expression": "0 0 10-17 * * 0-4" }
@@ -89,7 +113,7 @@
         "url": "={{ $env.QUANT_SERVICE_URL }}/runs/start",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ mode: $json.mode }) }}",
+        "jsonBody": "={{ JSON.stringify({ mode: $json.mode, tickers: $json.tickers || undefined }) }}",
         "options": {}
       },
       "id": "http-runs-start",
@@ -407,6 +431,16 @@
       "typeVersion": 4.2,
       "position": [1792, 0],
       "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tool result for the §6.5 chat assistant. This is the workflow's LAST node, so\n// its output is exactly what the Call n8n Workflow Tool hands back to the chat\n// agent — and the chat agent is a router with no analytical authority, so every\n// number and verdict it is allowed to say must appear HERE, verbatim from the\n// Risk Manager's final pass. Nothing is summarised or re-worded by an LLM on the\n// way out. Harmless for manual/scheduled runs, which simply ignore it.\nconst assess = $('Assess Run').first().json;\nconst payload = $('Build Report Payload').first().json;\n\nconst results = (payload.recommendations || []).map((rec) => {\n  const final = rec.final || {};\n  const agentStatus = ['sentiment', 'earnings', 'technical'].filter(\n    (k) => rec[k] && rec[k].status === 'degraded'\n  );\n  return {\n    ticker: rec.ticker,\n    recommendation: final.recommendation || 'unavailable',\n    conviction: final.conviction || 'unavailable',\n    rationale: final.rationale || 'unavailable',\n    degraded_agents: agentStatus,\n  };\n});\n\nreturn [{\n  json: {\n    run_id: assess.run_id,\n    status: assess.status,\n    report_path: assess.report_path,\n    results,\n    summary: payload.summary,\n  },\n}];"
+      },
+      "id": "code-chat-reply",
+      "name": "Chat Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2016, 0]
     }
   ],
   "connections": {
@@ -414,6 +448,12 @@
       "main": [[{ "node": "Set Mode (Manual)", "type": "main", "index": 0 }]]
     },
     "Set Mode (Manual)": {
+      "main": [[{ "node": "Start Run", "type": "main", "index": 0 }]]
+    },
+    "When Executed by Another Workflow": {
+      "main": [[{ "node": "Set Mode (Chat)", "type": "main", "index": 0 }]]
+    },
+    "Set Mode (Chat)": {
       "main": [[{ "node": "Start Run", "type": "main", "index": 0 }]]
     },
     "Schedule Trigger": {
@@ -496,6 +536,9 @@
     },
     "Assess Run": {
       "main": [[{ "node": "Finish Run", "type": "main", "index": 0 }]]
+    },
+    "Finish Run": {
+      "main": [[{ "node": "Chat Reply", "type": "main", "index": 0 }]]
     }
   },
   "settings": {

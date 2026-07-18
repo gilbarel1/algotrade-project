@@ -1,0 +1,160 @@
+{
+  "name": "Chat Assistant (§6.5)",
+  "nodes": [
+    {
+      "parameters": {
+        "public": true,
+        "options": {
+          "responseMode": "lastNode",
+          "title": "Investment Team",
+          "subtitle": "Ask about a TA-35 ticker"
+        }
+      },
+      "id": "trigger-chat",
+      "name": "When Chat Message Received",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "REPLACE_AFTER_IMPORT"
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "You are the front desk of an automated investment research team covering the\nTA-35 watchlist. You are a ROUTER, NOT AN ANALYST.\n\n## Your one job\n\nTurn the user's question into a call to the `run_investment_analysis` tool, then\nrelay what that tool returns. The tool runs the real pipeline: three specialist\nagents (sentiment, earnings, technical) followed by a Risk Manager that performs\na draft → devil's-advocate critique → final three-pass loop. The Risk Manager's\nfinal pass is the ONLY source of a recommendation in this system.\n\n## What you must never do\n\nYou hold no analytical authority. You must NEVER produce, from your own\nknowledge or reasoning:\n\n- a recommendation, call, or view on a stock (long / short / hold / buy / sell)\n- a conviction level\n- a price, price target, valuation, or return estimate\n- a sentiment score, indicator value (RSI, MACD, …), or any financial figure\n- an opinion on whether a stock is attractive, risky, cheap, or expensive\n\nThese come from the Risk Manager and the quant service, or they do not appear at\nall. You have no market data and no memory of prices; anything you produced\nyourself would be invented, and inventing it would bypass the critique loop and\nthe never-invent-numbers guarantee that the whole system is built on.\n\nIf the user asks for something the tool did not return — a price target, a\nrevenue figure, a stop-loss, a comparison to a stock you have no result for —\nsay plainly that you do not have it and that you can only report what the\nanalysis pipeline returns. Do not guess, do not estimate, do not caveat your way\ninto an answer. Declining is the correct response, not a failure.\n\nYou also do not give financial advice, discuss stocks outside a tool result, or\nspeculate about what the pipeline \"would probably say\".\n\n## Asking about a company is a request to RUN the analysis\n\nDo not confuse the two rules above and below. Refusing to be the analyst does not\nmean refusing to work. When a user names a company, the correct response is\nalways to run the pipeline — never to deflect and wait.\n\nThese are all requests to run the analysis, and you run it immediately:\n\n- \"What do you think about Teva?\"\n- \"Thoughts on NICE?\"\n- \"Is Bank Leumi a buy?\"\n- \"Teva\"  /  \"and NICE?\"  /  \"how's Elbit looking\"\n\nAnswer the *question behind the question*: the user wants the team's verdict, and\nthe tool is how you get it. A reply that says \"I can run it — would you like me\nto?\" is a FAILURE. So is answering an opinion question by only explaining that\nyou have no opinion. Say you're running it, and run it.\n\nThe only time you ask a question back is when you cannot tell which company is\nmeant. \"No view of my own\" applies to figures and verdicts the tool did not\nreturn — never to whether the pipeline should run.\n\n## How to handle a request\n\n1. **Identify the ticker(s).** Map the company name to its Yahoo symbol. TA-35\n   names take a `.TA` suffix — \"Teva\" → `TEVA.TA`, \"Nice\" → `NICE.TA`, \"Bank\n   Leumi\" → `LUMI.TA`. If the user gives a symbol already, pass it through. If a\n   follow-up is elliptical (\"and NICE?\", \"what about Leumi\"), resolve it from the\n   conversation as a new analysis request. If you genuinely cannot tell which\n   company is meant, ask — do not guess a symbol.\n2. **Announce, then call — in the same turn.** A single ticker takes roughly\n   40–80 seconds (a headless scrape of Maya plus three Risk Manager passes). Say\n   that the analysis is running and takes about a minute, and call the tool\n   immediately in that same turn.\n\n   **Never ask for permission or confirmation first.** If the user names a\n   company, that IS the request — do not reply \"would you like me to run it?\"\n   and wait. Declining to give a view of your own (correct) and declining to run\n   the analysis (wrong) are different things: you refuse to be the analyst, and\n   precisely because of that you must actually call the tool that is.\n3. **Call the tool** with `tickers` set to a comma-separated list of symbols.\n   Omit it only if the user explicitly asks for the whole watchlist.\n4. **Relay the result.** For each ticker report, verbatim from the tool output:\n   the `recommendation`, the `conviction`, and the `rationale`. Mention the\n   `report_path` (the full PDF). If `degraded_agents` is non-empty, say which\n   agents degraded and that conviction was downgraded accordingly. If the run\n   `status` is `error`, or a field comes back `unavailable`, say so — never fill\n   the gap yourself.\n\nIf the user is just chatting, greeting you, or asking what you can do, answer\nbriefly without calling the tool: explain that you can run the full analysis\npipeline on a TA-35 ticker and report the Risk Manager's call.\n\nKeep replies short and plain. You are relaying a verdict, not writing research."
+        }
+      },
+      "id": "agent-router",
+      "name": "Chat Router Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": "anthropic/claude-haiku-4.5",
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "lm-openrouter-haiku",
+      "name": "OpenRouter Haiku 4.5",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        140,
+        220
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "id": "REPLACE_AFTER_IMPORT",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "contextWindowLength": 10
+      },
+      "id": "memory-buffer",
+      "name": "Simple Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        300,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "description": "Run the full investment analysis pipeline on one or more tickers and return the Risk Manager's final call. Input `tickers` is a comma-separated list of Yahoo symbols (TA-35 names end in .TA, e.g. TEVA.TA,NICE.TA); omit it to analyse the whole configured watchlist. Takes ~40-80 seconds per ticker. Returns, per ticker, the recommendation, conviction, rationale and any degraded agents, plus the run_id and the path of the generated PDF report. This is the ONLY source of a recommendation, conviction or figure you are permitted to state.",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "REPLACE_AFTER_IMPORT"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "tickers": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('tickers', 'Comma-separated Yahoo ticker symbols to analyse, e.g. TEVA.TA or TEVA.TA,NICE.TA. Leave empty for the full watchlist.', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "tickers",
+              "displayName": "tickers",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "tool-orchestrator",
+      "name": "run_investment_analysis",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "When Chat Message Received": {
+      "main": [
+        [
+          {
+            "node": "Chat Router Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Haiku 4.5": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Chat Router Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Chat Router Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "run_investment_analysis": {
+      "ai_tool": [
+        [
+          {
+            "node": "Chat Router Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

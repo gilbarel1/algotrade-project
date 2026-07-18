@@ -14,9 +14,11 @@
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 import {
   REPO_ROOT,
   SERVICE_DIR,
+  frontendPort,
   loadEnvFile,
   mask,
   n8nPort,
@@ -26,13 +28,18 @@ import {
   serviceTarget,
 } from "./lib/env.mjs";
 
+const FRONTEND_DIR = path.join(REPO_ROOT, "frontend");
+
 const args = process.argv.slice(2);
 const only = (args.find((a) => a.startsWith("--only=")) || "").split("=")[1] || "all";
 const reload = args.includes("--reload");
 const runService = only === "all" || only === "service";
 const runN8n = only === "all" || only === "n8n";
+const runFrontend = only === "all" || only === "frontend";
 
-const COLOR = process.env.NO_COLOR ? null : { svc: "\x1b[36m", n8n: "\x1b[35m", dim: "\x1b[2m", off: "\x1b[0m" };
+const COLOR = process.env.NO_COLOR
+  ? null
+  : { svc: "\x1b[36m", n8n: "\x1b[35m", web: "\x1b[32m", dim: "\x1b[2m", off: "\x1b[0m" };
 const paint = (tag, text) => (COLOR ? `${COLOR[tag]}${text}${COLOR.off}` : text);
 const note = (text) => console.log(COLOR ? `${COLOR.dim}${text}${COLOR.off}` : text);
 
@@ -125,6 +132,12 @@ async function main() {
   console.log("Starting the TA-35 stack");
   note(`  quant service   ${target.baseUrl}   (cwd quant_service/)`);
   note(`  n8n             http://localhost:${n8nPort(env)}   -> service at ${target.n8nUrl}`);
+  if (runFrontend) {
+    note(
+      `  chat front end  http://localhost:${frontendPort(env)}   -> ` +
+        (env.N8N_CHAT_WEBHOOK_URL || "N8N_CHAT_WEBHOOK_URL unset (§6.5)"),
+    );
+  }
   note(`  NEWSAPI_API_KEY ${mask(env.NEWSAPI_API_KEY)}   N8N_API_KEY ${mask(env.N8N_API_KEY)}`);
   if (env.DUCKDB_PATH) note(`  DUCKDB_PATH     ${env.DUCKDB_PATH}`);
   console.log("");
@@ -154,6 +167,26 @@ async function main() {
         return;
       }
       note(`\nService healthy at ${target.healthUrl} — starting n8n\n`);
+    }
+  }
+
+  // The §6.5 chat front end. Started before n8n because the n8n branch below returns
+  // early when it finds a reusable instance, and that must not cost us the front end.
+  // It reuses the quant service's venv on purpose: its only dependencies (fastapi,
+  // uvicorn, httpx) are already installed there, so there is no second venv to create.
+  if (runFrontend && !shuttingDown) {
+    const python = requireVenvPython();
+    const port = frontendPort(env);
+    if (await portInUse(port)) {
+      note(`Something is already listening on port ${port} — not starting the chat front end.`);
+    } else {
+      start(
+        "web",
+        python,
+        ["-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", String(port), ...(reload ? ["--reload"] : [])],
+        { cwd: FRONTEND_DIR, env },
+      );
+      note(`Chat front end on http://localhost:${port}\n`);
     }
   }
 

@@ -85,14 +85,22 @@ def find_run_id(execution: dict) -> Optional[str]:
 
     Scans the executed nodes' output items rather than assuming a trigger node
     name, so it keeps working if an agent's trigger is ever renamed.
+
+    Every output *type* is scanned, not just `main`: the §6.5 chat assistant reaches
+    the orchestrator through a Call n8n Workflow Tool, so its run_id comes back on
+    the `ai_tool` connection. Scanning only `main` left the chat workflow with no
+    attributable run_id, and `/costs/harvest` silently dropped its tokens.
     """
     for runs in _run_data(execution).values():
         for run in runs or []:
-            for branch in ((run.get("data") or {}).get("main") or []):
-                for item in branch or []:
-                    run_id = (item.get("json") or {}).get("run_id")
-                    if isinstance(run_id, str) and run_id:
-                        return run_id
+            for branches in ((run.get("data") or {}).values()):
+                for branch in branches or []:
+                    for item in branch or []:
+                        if not isinstance(item, dict):
+                            continue
+                        run_id = (item.get("json") or {}).get("run_id")
+                        if isinstance(run_id, str) and run_id:
+                            return run_id
     return None
 
 

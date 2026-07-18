@@ -12,6 +12,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:service": "node scripts/dev.mjs --only=service",
     "dev:n8n": "node scripts/dev.mjs --only=n8n",
+    "dev:frontend": "node scripts/dev.mjs --only=frontend",
     "doctor": "node scripts/doctor.mjs",
     "smoke": "node scripts/py.mjs smoke_test.py @service-url",
     "db:init": "node scripts/py.mjs store_init.py",

@@ -123,6 +123,11 @@ export function n8nPort(env = {}) {
   return Number(env.N8N_PORT || 5678);
 }
 
+/** The §6.5 chat front end's port (frontend/app.py). */
+export function frontendPort(env = {}) {
+  return Number(env.FRONTEND_PORT || 8001);
+}
+
 /** True if something is already listening on host:port. */
 export function portInUse(port, host = "127.0.0.1") {
   return new Promise((resolve) => {

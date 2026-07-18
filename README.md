@@ -107,12 +107,14 @@ Everything else in `.env` can keep its default — see [Configuration](#configur
 npm run dev
 ```
 
-One command, both processes: it starts the quant service, waits for its `/health`, then starts
-n8n. Output is prefixed `[svc]` / `[n8n]` in a single terminal, and **Ctrl-C stops both**.
+One command, all three processes: it starts the quant service, waits for its `/health`, then
+starts the chat front end and n8n. Output is prefixed `[svc]` / `[web]` / `[n8n]` in a single
+terminal, and **Ctrl-C stops all of them**.
 
 | | |
 |---|---|
 | quant service | <http://localhost:8000> — interactive API docs at `/docs` |
+| chat front end | <http://localhost:8001> — §6.5 conversational entry point |
 | n8n editor | <http://localhost:5678> |
 
 `npm run dev` also loads `.env` into **both** processes and sets the n8n variables the
@@ -138,7 +140,7 @@ credentials must be selected in the editor. Full walkthrough:
 
 1. In n8n, create the **OpenRouter** credential once (paste `OPENROUTER_API_KEY`).
 2. *Workflows → Import from File* for each of `n8n/agents/*.json`, then
-   `n8n/orchestrator.workflow.json`.
+   `n8n/orchestrator.workflow.json`, then `n8n/chat_assistant.workflow.json` (§6.5).
 3. Open each **Chat Model** node and re-select your OpenRouter credential — imported JSONs
    carry a `REPLACE_AFTER_IMPORT` placeholder. (The Earnings Agent has **two** such nodes.)
 4. Copy each imported workflow's id (it's in the editor URL, `/workflow/<id>`) into
@@ -174,7 +176,36 @@ To run a **single agent** standalone, pin mock input on its Execute Workflow Tri
 Widen the windows as shown: the 2-hour news and 5-day earnings defaults are often legitimately
 empty, which looks like a bug but isn't.
 
-### 7. Scheduled runs (TASE hours)
+### 7. Ask the team in chat (§6.5)
+
+A third entry point alongside manual and scheduled runs: open <http://localhost:8001> and ask
+*"what do you think about Teva?"*. The assistant resolves the name to `TEVA.TA`, runs the **same**
+pipeline for that one ticker (~40–80 s), and reports the Risk Manager's call, conviction, rationale
+and the PDF path. Follow-ups resolve from memory — *"and NICE?"* analyses `NICE.TA`.
+
+The chat agent is a **router, not an analyst**: it may only call the pipeline and relay what comes
+back. Ask it for a price target and it declines rather than inventing one — that refusal is scored
+by `npm run eval` (`chat_refusal` row).
+
+One-time wiring, after importing `n8n/chat_assistant.workflow.json` (see step 5):
+
+1. Put the chat workflow's id in `config/universe.yaml → n8n_workflow_ids.chat` so its tokens
+   reach `costs` as the `chat` agent.
+2. Open the **`run_investment_analysis`** tool node and point its *Workflow* at your imported
+   **orchestrator** — it ships as a third `REPLACE_AFTER_IMPORT` placeholder (the other two are
+   the Chat Model credential and the trigger's webhook id). Until it points at a real workflow,
+   the assistant has nothing to call and every question fails.
+3. Open the **Chat Trigger** node, copy its **Production URL** (ends in `/chat`), and set
+   `N8N_CHAT_WEBHOOK_URL` in `.env`. Unset, the page says so instead of answering.
+4. **Publish/activate the orchestrator.** The chat tool reaches it through an *Execute Workflow
+   Trigger*, and n8n refuses to execute an inactive workflow — the assistant will report
+   *"the workflow is not active"* until you do. (Activating it also arms the Schedule Trigger; see
+   step 8.)
+
+A chat-initiated run is a first-class run: `runs.mode = "chat"`, a `recommendations` row, `costs`
+rows, and a PDF on disk exactly as a manual run produces.
+
+### 8. Scheduled runs (TASE hours)
 
 The orchestrator also carries a **Schedule Trigger** (`schedule_cron` from `config/universe.yaml`,
 `0 10-17 * * 0-4` — hourly, Sun–Thu 10:00–17:00). For the cron to fire on *local* time you must set
@@ -218,9 +249,9 @@ grows by one (with `mode='scheduled'`) for the Wednesday case.
 | `npm run smoke` | Endpoint check against the running service. |
 | `npm run ingest` | Pull the watchlist's OHLC into the `prices` cache (keyless — Yahoo Finance). |
 | `npm run costs` | Per-run LLM cost summary. |
-| `npm run eval` | Evaluation harness (§9) — scores the Sentiment & Earnings agents against `eval/*_labeled.jsonl` and prints a one-page summary. `npm run eval -- --no-llm` runs the FinBERT/HeBERT arm only. |
+| `npm run eval` | Evaluation harness (§9) — scores the Sentiment, Earnings and §6.5 chat-router agents against `eval/*_labeled.jsonl` and prints a one-page summary. `npm run eval -- --no-llm` runs the FinBERT/HeBERT arm only. |
 | `npm run db:init` | Create/repair the DuckDB schema. |
-| `npm run dev:service` / `npm run dev:n8n` | Just one side, for debugging. |
+| `npm run dev:service` / `npm run dev:n8n` / `npm run dev:frontend` | Just one process, for debugging. |
 | `npm run dev -- --reload` | Service with uvicorn auto-reload. |
 
 `npm run ingest` accepts the underlying flags: `npm run ingest -- --symbols TEVA.TA`,
@@ -245,6 +276,8 @@ it into both processes.
 | `N8N_API_KEY` | — | n8n → *Settings → n8n API*. The only place n8n exposes LLM token usage. |
 | `QUANT_SERVICE_URL` | `http://127.0.0.1:8000` | Single source for where the service lives: n8n uses it, and the runner derives uvicorn's port from it. Use `http://host.docker.internal:8000` if n8n runs in Docker. |
 | `N8N_API_URL` | `http://localhost:5678` | Where the quant service reaches n8n's REST API. |
+| `N8N_CHAT_WEBHOOK_URL` | — | §6.5 chat front end → n8n. The Chat Trigger node's **Production URL** (ends in `/chat`). Unset, the page says so rather than answering. |
+| `FRONTEND_PORT` | `8001` | Port for the chat front end. |
 | `DUCKDB_PATH` | `quant_service/store.duckdb` | Repo-root-relative; the runner absolutises it. |
 | `HF_HOME` | `.hf_cache` | Hugging Face cache (FinBERT/HeBERT weights). |
 | `REPORT_DIR` | `reports` | Generated PDFs. |
@@ -272,7 +305,11 @@ algotrade-project/
 │   └── requirements.txt
 ├── n8n/                        # workflows (§6) + README_credentials.md
 │   ├── orchestrator.workflow.json
+│   ├── chat_assistant.workflow.json   # §6.5 Chat Trigger → AI Agent (router only)
 │   └── agents/                 #   sentiment, earnings, technical, risk_manager
+├── frontend/                   # §6.5 chat UI — separate service on :8001
+│   ├── app.py                  #   GET / (page) + POST /api/chat (proxy to the n8n webhook)
+│   └── static/                 #   index.html, app.js, style.css — no build step
 ├── prompts/                    # version-controlled prompts & few-shot examples (§7)
 ├── eval/                       # evaluation harness (§9)
 ├── config/                     # universe.yaml (defaults) + rubric.yaml (thresholds)
@@ -303,7 +340,7 @@ Built and reviewed **one step at a time** (detail in `CLAUDE.md`).
 | 9 | `/report` real (WeasyPrint + Jinja2) | ✅ done |
 | 10 | Schedule trigger gated by TASE hours | ✅ done |
 | 11 | Evaluation harness (`python -m eval.run`) | ✅ done |
-| 12 | Chat assistant front end (bonus, §6.5) | ⬜ |
+| 12 | Chat assistant front end (bonus, §6.5) | ✅ done |
 | 13 | S&P 500 market abstraction (config + calendar + news/schedule gate) | ⬜ |
 | 14 | SEC EDGAR earnings source + report currency | ⬜ |
 | 15 | README + supporting docs for a grader | ⬜ |
@@ -355,6 +392,18 @@ schedule gate. Full plan: [`docs/sp500_integration_plan.md`](docs/sp500_integrat
   wrong Python: Playwright and the TLS truststore live in `quant_service/.venv`. `npm run dev`
   uses it; a hand-started uvicorn on system Python does not. (The `avoid` is *correct* — 2+
   degraded agents force it, §3.4.)
+- **Chat says "the workflow is not active".** The chat agent reaches the orchestrator through an
+  *Execute Workflow Trigger*, and n8n refuses to execute an inactive workflow. Publish/activate
+  **Orchestrator (§6.1)**, not just the chat workflow.
+- **Chat answers "would you like me to run it?" instead of running.** The live workflow is
+  carrying a stale system prompt. `prompts/chat_assistant_system.md` is the source of truth;
+  run `python scripts/sync_chat_prompt.py` to copy it into
+  `n8n/chat_assistant.workflow.json`, then re-import. `npm run eval` flags this as
+  *"WARNING prompt drift"* on the `chat_refusal` row.
+- **No `chat` row in `costs` for a chat run.** Expected on the first harvest: `/costs/harvest`
+  runs *inside* the orchestrator while the parent chat execution is still in flight, so n8n has
+  not finalised its token usage yet. Re-run the harvest after the reply lands and the row
+  appears — `curl -X POST $QUANT_SERVICE_URL/costs/harvest -d '{"run_id":"<id>"}'`.
 - **`npm run doctor`** checks most of the above (venv, keys, DuckDB, ports) without starting
   anything.
 

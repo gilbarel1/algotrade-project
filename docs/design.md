@@ -383,10 +383,12 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
 { "stored":1 }
 
 // POST /runs/start
-{ "mode":"manual" }                       // mode ∈ {manual, scheduled, chat}  (chat = §6.5)
+{ "mode":"manual",                        // mode ∈ {manual, scheduled, chat}  (chat = §6.5)
+  "tickers":null }                        // optional (§6.5): non-empty ⇒ overrides the
+                                          // config watchlist for this run; null/omitted ⇒ full watchlist
 { "run_id":"r_2026-06-22T13:00", "started_at":"2026-06-22T10:00:00+00:00",
   "mode":"manual",
-  "watchlist":["TEVA.TA","NICE.TA", …],   // config/universe.yaml (§4.4)
+  "watchlist":["TEVA.TA","NICE.TA", …],   // config/universe.yaml (§4.4), or the `tickers` override
   "window_minutes":120, "window_days":5, "lookback_days":180,
   "summary":"run r_2026-06-22T13:00 started (manual): 5 ticker(s)." }
 
@@ -512,8 +514,9 @@ A third entry point alongside the manual and scheduled triggers: an n8n **Chat T
 - **Model.** `anthropic/claude-haiku-4.5` at `temperature=0` (routing, not reasoning).
 - **Persistence and cost.** A chat-initiated run is a first-class run: it calls `/runs/start` with `mode: "chat"` and writes `runs`, `recommendations`, and `costs` like any other. The chat workflow's own id is added to `n8n_workflow_ids` as the `chat` agent so `/costs/harvest` attributes its tokens too (§9.4).
 - **Latency and expectation-setting.** A single ticker takes ~40–80 s (Maya's headless scrape plus the three Risk Manager passes), so the assistant announces the wait before calling the tool. Reports still land on disk per §8.3; the chat reply is a summary, not a replacement for the PDF.
+- **Front-end service (`frontend/`).** The user-facing chat UI is a **separate small FastAPI service** (`uvicorn app:app --port 8001`), not the n8n editor panel: `GET /` serves a single static chat page, and `POST /api/chat` proxies `{sessionId, chatInput}` to the n8n Chat Trigger webhook (`N8N_CHAT_WEBHOOK_URL`, §11.1) and returns the agent's reply. The proxy keeps the webhook URL out of the browser and sidesteps CORS. The browser mints a per-tab `sessionId` so the buffer-window memory above resolves follow-ups. **The front end holds no intelligence of its own**: no LLM call, no ML, no analytics — it is a dumb pipe to the chat workflow, which is what keeps the router-not-analyst guarantee intact. On a webhook failure it surfaces a degraded message; it never fabricates a reply.
 
-Canonical enum update: run `mode ∈ {manual, scheduled, chat}` (§5 `/runs/start`).
+Canonical enum update: run `mode ∈ {manual, scheduled, chat}` (§5 `/runs/start`), and `/runs/start` accepts an optional `tickers` override (§5).
 
 ---
 
@@ -621,9 +624,14 @@ n8n-investment-team/
 │   ├── templates/ {report.html.j2, report.css}
 │   ├── store.duckdb
 │   └── requirements.txt
+├── frontend/                           # §6.5 chat UI service (separate process, port 8001); Step 12
+│   ├── app.py                          # GET / (chat page) + POST /api/chat (proxy to the n8n chat webhook)
+│   ├── static/ {index.html, app.js, style.css}
+│   └── requirements.txt
 ├── prompts/  {sentiment_examples.jsonl, earnings_examples.jsonl,
-│              risk_manager_draft.md, risk_manager_critique.md, risk_manager_final.md}
-├── eval/     {sentiment_labeled.jsonl, earnings_labeled.jsonl, run.py}
+│              risk_manager_draft.md, risk_manager_critique.md, risk_manager_final.md,
+│              chat_assistant_system.md}   # §6.5 router-only system prompt
+├── eval/     {sentiment_labeled.jsonl, earnings_labeled.jsonl, chat_refusal_labeled.jsonl, run.py}
 ├── config/   {universe.yaml, rubric.yaml}
 ├── reports/  # generated PDFs, gitignored
 ├── docs/     {design.md, results.md, demo_script.md, architecture.svg}
@@ -645,6 +653,7 @@ ALPHAVANTAGE_API_KEY      # OHLC backup
 QUANT_SERVICE_URL         # http://localhost:8000 (or host.docker.internal:8000 if n8n is in Docker)
 N8N_API_URL               # http://localhost:5678 — n8n REST API, read by /costs/harvest (§9.4)
 N8N_API_KEY               # n8n API key (Settings → n8n API); token usage is only exposed there
+N8N_CHAT_WEBHOOK_URL      # http://localhost:5678/webhook/<chat-id>/chat — target of the frontend proxy (§6.5)
 DUCKDB_PATH               # quant_service/store.duckdb
 REPORT_DIR                # reports
 TZ                        # Asia/Jerusalem

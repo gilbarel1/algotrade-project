@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Investment Team — Chat</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Investment Team</h1>
+      <p class="sub">
+        Ask about a TA-35 name and the full pipeline runs: sentiment, earnings and
+        technical agents, then the Risk Manager's three-pass critique loop. Answers
+        come from the pipeline only — the assistant is a router, not an analyst.
+      </p>
+    </header>
+
+    <main id="log" aria-live="polite">
+      <div class="msg bot">
+        <div class="bubble">
+          Ask me about a TA-35 ticker — for example <em>"what do you think about
+          Teva?"</em>. A single name takes about a minute to analyse.
+        </div>
+      </div>
+    </main>
+
+    <form id="composer" autocomplete="off">
+      <input
+        id="input"
+        type="text"
+        placeholder="what do you think about Teva?"
+        aria-label="Message"
+        required
+      />
+      <button id="send" type="submit">Send</button>
+    </form>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

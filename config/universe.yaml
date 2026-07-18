@@ -106,3 +106,5 @@ n8n_workflow_ids:
   sentiment: "KnV1HngeDrOcVcqH"
   earnings: "7SU3ioCng1HsFMkl"
   risk_manager: "NgajAcDX26YE3i98"
+  # §6.5 chat assistant — its own tokens reach `costs` as the `chat` agent (§9.4).
+  chat: "oXFSZwkpmKO8BHRw"

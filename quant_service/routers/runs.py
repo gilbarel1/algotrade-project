@@ -32,13 +32,18 @@ def load_config() -> dict:
 
 
 class RunStartRequest(BaseModel):
-    mode: str = "manual"  # {manual, scheduled} (§6.1)
+    mode: str = "manual"  # {manual, scheduled, chat} (§6.1, §6.5)
+    # §6.5: an ad-hoc chat request analyses one name instead of the whole
+    # watchlist. Non-empty ⇒ overrides config for this run only; omitted or
+    # empty ⇒ the full config watchlist, exactly as manual/scheduled behave.
+    tickers: Optional[List[str]] = None
 
 
 @router.post("/runs/start")
 def runs_start(req: RunStartRequest):
     config = load_config()
-    watchlist: List[str] = list(config.get("watchlist") or [])
+    override = [t.strip() for t in (req.tickers or []) if t and t.strip()]
+    watchlist: List[str] = override or list(config.get("watchlist") or [])
     started_at = run_store.utc_now()
 
     con = cache.connect()
