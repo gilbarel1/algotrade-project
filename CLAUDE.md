@@ -116,6 +116,7 @@ Each step maps to sections of `docs/design.md`. Build in the order listed and do
 - **Secrets.** Only `.env.example` is committed; `.env` is gitignored. All keys from env vars (§11.1).
 - **Determinism.** `temperature=0` for single-shot LLM calls; `temperature=0.3` only inside self-consistency sampling (§11.2).
 - **Defaults from config.** Watchlist, news window, earnings window, lookback, cron, report directory in `config/universe.yaml`; rubric thresholds in `config/rubric.yaml`. Never hardcode (§4.4).
+- **Never run the eval harness unprompted.** Do not run `npm run eval` (or `python -m eval.run`) unless it is genuinely necessary for the task at hand — it fans out many LLM calls and burns real OpenRouter credits. Prefer cheaper checks; if you believe a full eval run is warranted, ask first and explain why.
 
 ---
 
