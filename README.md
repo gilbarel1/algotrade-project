@@ -48,13 +48,14 @@ Two layers joined by one HTTP boundary (§2 of the design):
   libraries, so all heavy data and computation stay server-side; only short text and scores
   cross the LLM boundary.
 
-**Where the build stands:** Steps 0–11 are done — the full team runs end-to-end, persists its
+**Where the build stands:** Steps 0–13 are done — the full team runs end-to-end, persists its
 results, and renders the **PDF report** (`/report`): per-ticker pages with the dual-sentiment
 panel, the three-pass reasoning trace, earnings figures with confidence markers, news
 citations, a price chart, and a methodology footer. The orchestrator also runs on a
-**TASE-hours schedule** (Sun–Thu, gated to 09:30–17:30 Asia/Jerusalem) alongside the manual
-trigger. An **evaluation harness** (`npm run eval`, §9) scores the Sentiment and Earnings
-agents against hand-labeled fixtures and prints a one-page metrics summary. See the
+**market-hours schedule** — a mixed TA-35 + S&P 500 watchlist is supported, and a scheduled run
+analyzes only the tickers whose market (`tase` | `us`) is currently in session — alongside the
+manual and chat triggers. An **evaluation harness** (`npm run eval`, §9) scores the Sentiment and
+Earnings agents against hand-labeled fixtures and prints a one-page metrics summary. See the
 [roadmap](#build-roadmap).
 
 ---
@@ -205,10 +206,11 @@ One-time wiring, after importing `n8n/chat_assistant.workflow.json` (see step 5)
 A chat-initiated run is a first-class run: `runs.mode = "chat"`, a `recommendations` row, `costs`
 rows, and a PDF on disk exactly as a manual run produces.
 
-### 8. Scheduled runs (TASE hours)
+### 8. Scheduled runs (per-market hours)
 
 The orchestrator also carries a **Schedule Trigger** (`schedule_cron` from `config/universe.yaml`,
-`0 10-17 * * 0-4` — hourly, Sun–Thu 10:00–17:00). For the cron to fire on *local* time you must set
+`0 10-23 * * 0-5` — hourly, Sun–Fri 10:00–23:00 Israeli time, spanning **both** markets' windows:
+TASE 09:30–17:25 IL and NYSE 09:30–16:00 ET = 16:30–23:00 IL). For the cron to fire on *local* time you must set
 **`GENERIC_TIMEZONE=Asia/Jerusalem`** in n8n's environment — n8n evaluates Schedule Trigger crons in
 `GENERIC_TIMEZONE`, **not** `TZ`; left unset it defaults to `America/New_York` and the schedule
 fires at the wrong hours (this is a common n8n footgun). Keep `TZ=Asia/Jerusalem` as well (OS clock).
@@ -217,26 +219,43 @@ builds have an Active toggle) — inactive workflows never fire on schedule. n8n
 missed cron ticks, so if the process isn't running at the exact top of the hour that fire is skipped.
 The Manual Trigger is unaffected and always runs.
 
-Every scheduled fire passes through an in-workflow **TASE Hours Gate** (Sun–Thu, 09:30–17:30
-Asia/Jerusalem) that sits *before* `/runs/start`. Outside those hours it exits at a No-Op with
-**no `runs` row written** (§11.2); the manual path bypasses the gate. Scheduled runs are recorded
-with `mode: "scheduled"`; manual runs with `mode: "manual"`.
+The cron is deliberately wider than either market, because the **per-market gate lives in the quant
+service**, not the workflow (Step 13): `POST /runs/start` in `scheduled` mode filters the watchlist
+to the tickers whose market is currently in session — computing "now" in each market's own timezone
+via `zoneinfo`, so the ~2–3 week Israel/US DST-skew windows stay correct. A scheduled fire at 11:00
+Israeli time therefore analyzes only the TASE names; one at 20:00 analyzes only the US names. When
+**no** market is in session the service returns `skipped: true` with `run_id: null` and **no `runs`
+row written**, and the workflow exits at the `Skip (No Market In Session)` No-Op. Manual and chat
+runs are never filtered. Scheduled runs are recorded with `mode: "scheduled"`; manual with
+`mode: "manual"`, chat with `mode: "chat"`.
 
-**Testing the gate deterministically** (the gate reads the real clock, so you can't force
-off-hours on demand): set `TASE_GATE_FAKE_NOW` in n8n's env to an ISO timestamp and the gate
-evaluates *that* instant instead. **This is a dev-only override — leave it unset in production.**
+**Testing the gate deterministically** (it reads the real clock, so you can't force off-hours on
+demand): set `MARKET_GATE_FAKE_NOW` to an ISO timestamp **with a UTC offset** in the environment of
+the **quant service** (not n8n — the gate moved there in Step 13; this replaces the old
+`TASE_GATE_FAKE_NOW`). **Dev-only — leave it unset in production.**
 
 ```bash
-# Outside hours → gate false, ends at the No-Op, runs count unchanged, no report
-TASE_GATE_FAKE_NOW=2026-07-17T12:00:00+03:00   # a Friday
+# No market in session → skipped:true, no runs row
+MARKET_GATE_FAKE_NOW=2026-07-25T10:00:00+00:00   # a Saturday
 
-# Inside hours → full pipeline, new runs row with mode "scheduled"
-TASE_GATE_FAKE_NOW=2026-07-15T11:00:00+03:00   # a Wednesday midday
+# TASE open, NYSE shut → watchlist filtered to the *.TA names
+MARKET_GATE_FAKE_NOW=2026-07-21T08:00:00+00:00   # Tue 11:00 IL / 04:00 ET
+
+# NYSE open, TASE shut → watchlist filtered to the US names
+MARKET_GATE_FAKE_NOW=2026-07-21T17:00:00+00:00   # Tue 20:00 IL / 13:00 ET
 ```
 
-Execute the **Schedule Trigger** node (n8n's "Execute step") after setting the var and restarting
-n8n; confirm the `runs` count in `quant_service/store.duckdb` is unchanged for the Friday case and
-grows by one (with `mode='scheduled'`) for the Wednesday case.
+Restart the quant service with the var set, then:
+
+```bash
+curl -s -X POST http://localhost:8000/runs/start \
+  -H 'Content-Type: application/json' \
+  -d '{"mode":"scheduled","tickers":["TEVA.TA","AAPL"]}'
+```
+
+Confirm the returned `watchlist` holds only the in-session market's tickers, and that for the
+Saturday case the response is `skipped:true` with the `runs` count in `quant_service/store.duckdb`
+unchanged. The same call with `"mode":"manual"` must return both tickers regardless of the clock.
 
 ---
 
@@ -294,7 +313,7 @@ algotrade-project/
 ├── quant_service/              # FastAPI service — all ML, indicators, PDF (§5)
 │   ├── app.py                  #   entrypoint: uvicorn app:app --port 8000
 │   ├── routers/                #   one module per endpoint
-│   ├── data/                   #   yahoo, newsapi, rss, maya, stores, cleaning, cache
+│   ├── data/                   #   markets, yahoo, newsapi, rss, maya, stores, cleaning, cache
 │   ├── indicators/             #   pandas-ta computation behind /indicators
 │   ├── nlp/                    #   finbert, hebert, language_detect
 │   ├── pdf/                    #   render (WeasyPrint), charts (matplotlib)
@@ -338,10 +357,10 @@ Built and reviewed **one step at a time** (detail in `CLAUDE.md`).
 | 7 | Risk Manager three-stage critique loop | ✅ done |
 | 8 | Orchestrator fan-out + cost logging | ✅ done |
 | 9 | `/report` real (WeasyPrint + Jinja2) | ✅ done |
-| 10 | Schedule trigger gated by TASE hours | ✅ done |
+| 10 | Schedule trigger gated by market hours | ✅ done |
 | 11 | Evaluation harness (`python -m eval.run`) | ✅ done |
 | 12 | Chat assistant front end (bonus, §6.5) | ✅ done |
-| 13 | S&P 500 market abstraction (config + calendar + news/schedule gate) | ⬜ |
+| 13 | S&P 500 market abstraction (config + calendar + news/schedule gate) | ✅ done |
 | 14 | SEC EDGAR earnings source + report currency | ⬜ |
 | 15 | README + supporting docs for a grader | ⬜ |
 
@@ -351,6 +370,14 @@ already in place.
 
 **S&P 500 support (Steps 13–14):** mixed TA-35 + S&P watchlist, SEC EDGAR earnings, per-market
 schedule gate. Full plan: [`docs/sp500_integration_plan.md`](docs/sp500_integration_plan.md).
+
+Step 13 landed the **market abstraction**: every ticker resolves to a market (`tase` | `us`) from
+its Yahoo suffix (`*.TA` → `tase`, bare → `us`), and `config/universe.yaml`'s `markets:` block makes
+the trading calendar, trading hours, news feeds, earnings source and currency per-market instead of
+globally Israeli. A mixed watchlist like `["TEVA.TA","AAPL"]` is one list, not two code paths — US
+symbols reindex onto a Mon–Fri session grid (Fridays kept, no manufactured Sunday bars), pull the
+`en_us` RSS group, and gate on NYSE hours. Earnings still route to Maya for every ticker until
+Step 14 adds SEC EDGAR.
 
 ---
 

@@ -5,8 +5,9 @@ quant service means n8n moves only compact, pre-cleaned items — no raw feeds, 
 DuckDB driver in n8n (§2 heavy-data guardrail).
 
 - **/news/fetch** resolves the ticker's company terms and feeds from
-  `config/universe.yaml`, pulls NewsAPI (EN, searched) plus the RSS groups (EN/HE,
-  pulled whole), applies §4.3 cleaning (dedupe by url; keep only items whose
+  `config/universe.yaml`, pulls NewsAPI (EN, searched) plus the RSS groups of the
+  ticker's **market** (§4.4 — `en_il`+`he_il` for TASE, `en_us` for US; pulled
+  whole), applies §4.3 cleaning (dedupe by url; keep only items whose
   headline/summary text contains a term), and returns the items together with the
   few-shot examples the LLM scorer needs. A source that fails degrades the summary
   (prefix ``degraded:``) rather than 500-ing; zero clean items with all sources
@@ -22,25 +23,20 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
-import yaml
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from data import cache, news_store, newsapi, rss
+from data import cache, markets, news_store, newsapi, rss
+from data.markets import load_config as _load_config
 from data.textclean import clean_text, mentions_term
 from nlp import language_detect
 
 router = APIRouter()
 
 # routers/news.py -> routers/ -> quant_service/ -> repo root.
+# Config itself is read by `data/markets.py` (the single §4.4 reader).
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-_CONFIG_PATH = os.path.join(_REPO_ROOT, "config", "universe.yaml")
 _FEWSHOT_PATH = os.path.join(_REPO_ROOT, "prompts", "sentiment_examples.jsonl")
-
-
-def _load_config() -> dict:
-    with open(_CONFIG_PATH, "r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh) or {}
 
 
 def _load_fewshot() -> List[dict]:
@@ -145,11 +141,18 @@ def news_fetch(req: NewsFetchRequest):
     except newsapi.NewsAPIError as exc:
         errors.append(f"NewsAPI: {exc}")
 
-    # RSS groups (pulled whole, filtered on cleaning). EN primary, HE fallback.
-    for lang in ("en", "he"):
-        urls = feeds.get(lang) or []
+    # RSS groups of THIS ticker's market (§4.4): a TASE name pulls en_il+he_il
+    # (EN primary, HE fallback), a US name pulls en_us — never the other market's
+    # local press. The group name is `<lang>_<region>`, so the feed's language is
+    # its prefix; rss.fetch_rss carries that through per group rather than
+    # detecting it, and it routes FinBERT vs HeBERT downstream (§3.1).
+    for group in markets.market_config(markets.market(req.ticker, config), config).get(
+        "rss_feed_groups"
+    ) or []:
+        urls = feeds.get(group) or []
         if not urls:
             continue
+        lang = str(group).split("_", 1)[0]
         items, feed_errors = rss.fetch_rss(urls, lang, window)
         raw_items.extend(items)
         errors.extend(feed_errors)

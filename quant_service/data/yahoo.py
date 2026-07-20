@@ -1,12 +1,16 @@
 """Yahoo Finance OHLC ingestion and cleaning (§4.1, §4.3).
 
-Pulls daily OHLC for `*.TA` watchlist symbols via `yfinance`, applies the §4.3
-cleaning rules, and writes the result into the DuckDB `prices` cache (§4.2):
+Pulls daily OHLC for watchlist symbols via `yfinance`, applies the §4.3 cleaning
+rules, and writes the result into the DuckDB `prices` cache (§4.2):
 
   * **Adjusted close** — `auto_adjust=True` so OHLC are split/dividend adjusted
     and `close` is the adjusted close (§4.3).
-  * **TASE-calendar reindex** — reindex onto the Sunday–Thursday session grid
-    (the Israeli trading week; Friday/Saturday are the weekend, not Sat/Sun).
+  * **Market-calendar reindex** — reindex onto the session grid of the symbol's
+    own market (§4.4): Sunday–Thursday for `tase` (the Israeli trading week —
+    Friday/Saturday are the weekend, not Sat/Sun), Monday–Friday for `us`.
+    Running a US symbol through the TASE grid would silently drop every Friday
+    session and manufacture a forward-filled Sunday one, so the grid is resolved
+    per symbol rather than assumed.
   * **One-day-gap forward-fill** — isolated single missing sessions are bridged
     by forward fill; runs of two or more missing sessions (genuine multi-day
     closures) are left as gaps and dropped.
@@ -29,6 +33,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from data import markets
+
 SOURCE = "yahoo"
 
 # §11.2: external calls are rate-limit-aware. This is a defensive backoff for a
@@ -37,10 +43,6 @@ SOURCE = "yahoo"
 # handled up front by `configure_tls()`, not here.
 RATE_LIMIT_RETRIES = 4
 RATE_LIMIT_BACKOFF_SECONDS = 15.0
-
-# pandas weekday numbering: Monday=0 … Sunday=6.
-# TASE trades Sunday–Thursday; Friday (4) and Saturday (5) are the weekend.
-TASE_CLOSED_WEEKDAYS = (4, 5)
 
 # §4.3: flag close-to-close returns beyond this many MADs from the median return.
 OUTLIER_MAD_MULTIPLE = 8.0
@@ -158,10 +160,16 @@ def fetch_ohlc(symbol: str, lookback_days: int, interval: str = "1d") -> pd.Data
     return raw
 
 
-def _tase_sessions(start: pd.Timestamp, end: pd.Timestamp) -> pd.DatetimeIndex:
-    """Sunday–Thursday calendar dates spanning [start, end] inclusive."""
+def _sessions(
+    start: pd.Timestamp, end: pd.Timestamp, closed: tuple[int, ...]
+) -> pd.DatetimeIndex:
+    """Trading-day calendar dates spanning [start, end] inclusive.
+
+    `closed` is the market's non-trading weekdays in pandas numbering
+    (Mon=0…Sun=6), from `markets.closed_weekdays` (§4.4).
+    """
     days = pd.date_range(start=start, end=end, freq="D")
-    return days[~days.weekday.isin(TASE_CLOSED_WEEKDAYS)]
+    return days[~days.weekday.isin(closed)]
 
 
 def clean_ohlc(raw: pd.DataFrame, symbol: str) -> tuple[pd.DataFrame, IngestResult]:
@@ -178,8 +186,10 @@ def clean_ohlc(raw: pd.DataFrame, symbol: str) -> tuple[pd.DataFrame, IngestResu
 
     df = raw.sort_index()
 
-    # 1) Reindex onto the TASE Sunday–Thursday session grid (§4.3).
-    sessions = _tase_sessions(df.index.min(), df.index.max())
+    # 1) Reindex onto the session grid of the symbol's own market (§4.3, §4.4):
+    #    Sun–Thu for tase, Mon–Fri for us.
+    closed = markets.closed_weekdays(markets.market(symbol))
+    sessions = _sessions(df.index.min(), df.index.max(), closed)
     reindexed = df.reindex(sessions)
 
     # 2) Classify missing sessions into single-day gaps vs multi-day closures.

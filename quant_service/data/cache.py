@@ -79,13 +79,21 @@ def count_prices(con: duckdb.DuckDBPyConnection, symbol: str | None = None) -> i
     ).fetchone()[0]
 
 
-# A cache is treated as covering the requested window if its calendar span is
-# within this many days of `lookback_days`. The slack absorbs the fact that the
-# earliest trading day on/after a calendar cutoff can fall a few days later
-# (weekend + TASE holiday clustering); it is far smaller than the gaps we must
-# detect (e.g. a 120-day cache asked for 180 days), so a genuine shortfall still
-# triggers a re-ingest.
-COVERAGE_SLACK_DAYS = 3
+def _coverage_slack_days(symbol: str) -> int:
+    """Days of slack allowed when judging whether a cache covers the window.
+
+    The slack absorbs the fact that the earliest trading day on/after a calendar
+    cutoff can fall a few days later (the market's weekend, plus holiday
+    clustering around it), so it is derived from the symbol's own market: one day
+    per closed weekday plus one for a holiday abutting the weekend. Both markets
+    currently have two-day weekends, so this is 3 either way — the point is that
+    a market with a different weekend gets the right number rather than the
+    Israeli one. It stays far smaller than the gaps we must detect (e.g. a
+    120-day cache asked for 180 days), so a genuine shortfall still re-ingests.
+    """
+    from data import markets  # local import: mirrors the yahoo import below
+
+    return len(markets.closed_weekdays(markets.market(symbol))) + 1
 
 
 def get_cached_ohlc(
@@ -114,7 +122,7 @@ def get_cached_ohlc(
 
     df = read_prices(con, symbol)
     degrade_reason: str | None = None
-    if not _covers(df, lookback_days):
+    if not _covers(df, lookback_days, _coverage_slack_days(symbol)):
         res = yahoo.ingest_symbol(con, symbol, lookback_days)
         if res.status == "ok":
             df = read_prices(con, symbol)
@@ -129,21 +137,21 @@ def get_cached_ohlc(
     return df, degrade_reason
 
 
-def _covers(df: pd.DataFrame, lookback_days: int) -> bool:
+def _covers(df: pd.DataFrame, lookback_days: int, slack_days: int) -> bool:
     """True if the cached rows span at least the requested calendar window.
 
     Measured as the cache's own calendar span (`max_ts - min_ts`) rather than a
-    row count, because TASE sessions are sparser than calendar days. A symbol
-    genuinely younger than `lookback_days` can never satisfy this and will
-    re-ingest each time — harmless for the TA-35 watchlist (all long-listed), and
-    it never yields wrong data, only an occasional redundant fetch.
+    row count, because trading sessions are sparser than calendar days in every
+    market. A symbol genuinely younger than `lookback_days` can never satisfy
+    this and will re-ingest each time — harmless for a watchlist of long-listed
+    names, and it never yields wrong data, only an occasional redundant fetch.
     """
     if df.empty:
         return False
     if lookback_days <= 0:
         return True
     span_days = (df["ts"].max() - df["ts"].min()).days
-    return span_days >= lookback_days - COVERAGE_SLACK_DAYS
+    return span_days >= lookback_days - slack_days
 
 
 def _slice_lookback(df: pd.DataFrame, lookback_days: int) -> pd.DataFrame:

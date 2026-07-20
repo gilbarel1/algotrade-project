@@ -18,6 +18,50 @@ earnings_window_days: 5
 earnings_candidates: 3
 ohlc_lookback_days: 180
 
+# --- Market abstraction (§4.4) --------------------------------------------
+# Every ticker resolves to exactly one market. Derivation: a `*.TA` suffix ⇒
+# `tase`, any bare symbol ⇒ `us`; `market_overrides` below wins over the suffix
+# rule when a symbol needs pinning explicitly. Each market bundles the properties
+# that used to be global TASE assumptions, so a mixed watchlist
+# (["TEVA.TA", "AAPL"]) is one list, not two code paths.
+#
+# TWO WEEKDAY CONVENTIONS live here, deliberately kept distinct:
+#   * `closed_weekdays` uses PANDAS numbering (Mon=0 … Sun=6). Consumed by the
+#     OHLC session-grid reindex in data/yahoo.py (§4.3).
+#   * `trading_hours.days` uses the N8N CRON convention (0=Sun). Consumed by the
+#     schedule gate in /runs/start (§6.1) and matches `schedule_cron` below.
+# The conversion between them happens in exactly ONE place: is_market_open() in
+# quant_service/data/markets.py. Do not "harmonise" these by hand.
+#
+# `open`/`close` are local wall-clock in the market's own `tz`; the gate computes
+# "now" in that tz via zoneinfo, so the ~2-3 week Israel/US DST-skew windows are
+# handled correctly (a fixed UTC offset would be wrong for part of the year).
+markets:
+  tase:
+    closed_weekdays: [4, 5]          # Fri, Sat
+    trading_hours:
+      tz: "Asia/Jerusalem"
+      days: [0, 1, 2, 3, 4]          # Sun-Thu
+      open: "09:30"
+      close: "17:25"                 # TASE continuous trading ends ~17:25
+    earnings_source: maya
+    rss_feed_groups: [en_il, he_il]  # keys into rss_feeds below
+    currency: ILS
+  us:
+    closed_weekdays: [5, 6]          # Sat, Sun
+    trading_hours:
+      tz: "America/New_York"
+      days: [1, 2, 3, 4, 5]          # Mon-Fri
+      open: "09:30"
+      close: "16:00"
+    earnings_source: edgar           # SEC EDGAR (§4.1); wired up in Step 14
+    rss_feed_groups: [en_us]
+    currency: USD
+
+# Explicit symbol -> market pin, overriding the suffix rule. Empty by default;
+# the suffix rule covers every symbol currently in use.
+market_overrides: {}
+
 # Ticker -> query terms used to fetch news (§3.1) AND to search Maya disclosures
 # (§3.2, freeText search then local re-verify). Runs are unattended (schedule
 # trigger over the fixed watchlist), so there is no user query: the ticker IS the
@@ -75,26 +119,68 @@ search_terms:
   STRS.TA:  ["Strauss Group", "שטראוס"]
   SPEN.TA:  ["Shapir Engineering", "שפיר הנדסה"]
 
-# RSS feeds fetched server-side by /news/fetch. EN feeds are primary; HE feeds
-# are the §3.1 fallback (LLM translates inline). NewsAPI covers EN separately.
-# URLs verified live 2026-07-05 (the previously-listed Calcalist feeds 404/403).
+  # --- US (market: us) ---
+  # EN-only: the US feeds and NewsAPI carry no Hebrew. Same collision care as the
+  # TASE names, and it bites harder here — terms are shared by the RSS path (which
+  # only sees finance feeds) and NewsAPI (which searches the whole web).
+  # Measured live 2026-07-20 over a 3-day window:
+  #   ["Apple Inc","Apple"]  -> 43 items, 19 of them Pypi.org package listings
+  #                             plus Slickdeals/Geeky Gadgets — near-useless for
+  #                             financial sentiment.
+  #   ["Apple Inc","iPhone"] -> 36 items, consumer/product coverage (deals, Siri
+  #                             tips) rather than the equity.
+  #   ["Apple Inc"]          ->  5 items, all equity news (Financial Post, MacDailyNews,
+  #                             Biztoc on the quarter).
+  # Fewer precise items beat many noisy ones: the sentiment agent scores what it is
+  # given, and zero matches is a valid "no coverage" result (§13), not a failure.
+  # Add further S&P 500 names here as the watchlist grows — verify each the same way.
+  AAPL: ["Apple Inc"]
+
+# RSS feeds fetched server-side by /news/fetch, keyed by FEED GROUP. A ticker's
+# groups come from its market's `rss_feed_groups` (see `markets:` above), so a
+# TASE name pulls en_il+he_il and a US name pulls en_us — no ticker ever pulls
+# the other market's local press. NewsAPI covers EN separately for both markets.
+#
+# GROUP NAMING IS LOAD-BEARING: the part before the underscore is the feed's
+# LANGUAGE (`en_il`/`en_us` -> en, `he_il` -> he) and routes FinBERT vs HeBERT
+# downstream (§3.1); the part after is the region. routers/news.py derives the
+# language by splitting on "_", so a new group must follow `<lang>_<region>`.
+# IL URLs verified live 2026-07-05; US URLs verified live 2026-07-20.
 rss_feeds:
-  en:
-    # Globes English — general news feed (feed language: en).
+  en_il:
+    # Globes English — general news feed.
     - "https://www.globes.co.il/webservice/rss/rssfeeder.asmx/FeederNode?iID=1725"
-  he:
+  he_il:
     # Ynet — כלכלה (economy).
     - "https://www.ynet.co.il/Integration/StoryRss6.xml"
     # Globes — שוק ההון והשקעות (capital markets & investments).
     - "https://www.globes.co.il/webservice/rss/rssfeeder.asmx/FeederNode?iID=585"
+  en_us:
+    # Yahoo Finance — headline feed (broad US market coverage).
+    - "https://finance.yahoo.com/news/rssindex"
+    # CNBC — Finance.
+    - "https://www.cnbc.com/id/10000664/device/rss/rss.html"
 # n8n's Schedule Trigger cron is 6-field, SECONDS-FIRST: [sec] [min] [hour] [dom] [month] [dow].
-# So "0 0 10-17 * * 0-4" = second 0, minute 0, hours 10-17, any day, any month, Sun-Thu (0=Sunday).
-# A 5-field expression is misparsed (fields shift left; e.g. "0-4" lands in Month) and never fires.
+# So "0 0 10-23 * * 0-5" = second 0, minute 0, hours 10-23, any day, any month, Sun-Fri (0=Sunday).
+# A 5-field expression is misparsed (fields shift left; e.g. "0-5" lands in Month) and never fires.
 # Timezone: n8n evaluates the cron in GENERIC_TIMEZONE (NOT TZ); set GENERIC_TIMEZONE=Asia/Jerusalem
-# (§11.1) so 10-17 reads as local TASE hours. DST is handled by the timezone, not the expression.
-# NOTE: design §4.4 shows the standard 5-field form "0 10-17 * * 0-4"; this is the n8n-correct 6-field
-# equivalent of the same intent (see Step 10 deviation note). Covers TASE continuous trading ~09:30-17:25.
-schedule_cron: "0 0 10-17 * * 0-4"
+# (§11.1) so the hours read as local Israeli time. DST is handled by the timezone, not the expression.
+# NOTE: design §4.4 shows the standard 5-field form "0 10-23 * * 0-5"; this is the n8n-correct 6-field
+# equivalent of the same intent.
+#
+# WIDENED IN STEP 13 (was "0 0 10-17 * * 0-4", TASE-only) to cover BOTH markets:
+#   * TASE  09:30-17:25 Asia/Jerusalem      -> IL hours 10-17, Sun-Thu
+#   * NYSE  09:30-16:00 America/New_York    -> IL hours 16:30-23:00 normally (IL is
+#     7h ahead of ET), or 15:30-22:00 during the ~2-3 week IL/US DST-skew windows
+#     when the gap is 6h. Both fit inside IL hours 10-23.
+# Day-of-week 0-5 (Sun-Fri IL) covers TASE Sun-Thu plus NYSE Mon-Fri; a US Friday
+# session ends Fri 23:00 IL at the latest and never crosses into Saturday.
+#
+# The cron is deliberately WIDER than either market. It is not the gate: the
+# per-market gate lives in /runs/start (§6.1), which filters the watchlist to the
+# markets actually in session and writes NO runs row when none is. A fire outside
+# all market hours therefore costs one cheap HTTP call and changes nothing.
+schedule_cron: "0 0 10-23 * * 0-5"
 report_dir: "reports"
 
 # n8n sub-workflow ids (§6.2, §4.4). Filled in after importing the agent workflows

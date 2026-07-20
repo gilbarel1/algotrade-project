@@ -12,12 +12,12 @@ The system runs on self-hosted n8n with language-model access via OpenRouter; co
 
 ## 1. Scope and assumptions
 
-- **Watchlist.** TA-35 constituents. Starter set: `TEVA.TA`, `NICE.TA`, `LUMI.TA`, `POLI.TA`, `ESLT.TA`; the full list lives in config.
-- **Markets data.** Daily and intraday OHLC via Yahoo Finance (`*.TA` symbols); Alpha Vantage as a backup for indicators and intraday history.
-- **News.** NewsAPI for English coverage and Israeli English-language outlets (Globes, Reuters, Bloomberg, Calcalist English) via targeted RSS. Hebrew headlines from Ynet/Calcalist RSS are used as a fallback and translated by the language model.
-- **Earnings disclosures.** The English MAYA page at `maya.tase.co.il/en/reports/companies` is primary; the Hebrew page is fallback for names that report only in Hebrew. The paid TASE MAYA API is out of scope.
+- **Watchlist.** TA-35 **and S&P 500 constituents, mixed** — one watchlist can hold `TEVA.TA` and `AAPL` together. Starter set: `TEVA.TA`, `NICE.TA`, `LUMI.TA`, `POLI.TA`, `ESLT.TA`; the full list lives in config. Every ticker carries a **market** (`tase` | `us`) derived from the Yahoo suffix (`*.TA` → `tase`, bare symbol → `us`), with an optional explicit override in config (§4.4). The market is a bundle of properties — trading calendar, trading hours, earnings source, news feeds, currency — replacing what used to be global TASE assumptions.
+- **Markets data.** Daily and intraday OHLC via Yahoo Finance (`*.TA` symbols for TASE, bare symbols for US); Alpha Vantage as a backup for indicators and intraday history.
+- **News.** NewsAPI for English coverage and Israeli English-language outlets (Globes, Reuters, Bloomberg, Calcalist English) via targeted RSS. Hebrew headlines from Ynet/Calcalist RSS are used as a fallback and translated by the language model. US names draw on NewsAPI plus a US finance RSS group (`en_us`, §4.4).
+- **Earnings disclosures.** For TASE names, the English MAYA page at `maya.tase.co.il/en/reports/companies` is primary; the Hebrew page is fallback for names that report only in Hebrew. The paid TASE MAYA API is out of scope. For US names the source is **SEC EDGAR** (§4.1); the fetch source routes by market, and everything downstream of the fetch is identical (§3.2).
 - **Decision scope.** An analytical recommendation report (long / short / hold / avoid with conviction and rationale) per ticker and an overall watchlist summary. No real or simulated execution.
-- **Run modes.** Manual trigger for demonstrations; scheduled trigger hourly during TASE hours (Sun–Thu, ~09:30–17:30 Asia/Jerusalem); and a **chat trigger** (§6.5) that runs the same pipeline conversationally for an ad-hoc ticker.
+- **Run modes.** Manual trigger for demonstrations; scheduled trigger hourly across both markets' trading windows, where a scheduled run analyzes **only the tickers whose market is currently in session** (the per-market gate, §6.1); and a **chat trigger** (§6.5) that runs the same pipeline conversationally for an ad-hoc ticker. Manual and chat runs are never gated by market hours.
 - **Delivery.** A PDF report saved to `reports/YYYY-MM-DD/HHMM/report.pdf`. Email and Telegram delivery are out of scope but the report step is structured so either can be added with a single extra n8n node.
 - **Deployment.** Local only.
 
@@ -102,7 +102,7 @@ Each agent is an n8n sub-workflow. Sentiment, Earnings, and Technical run in par
      Selection is **a single decision over the whole candidate set**, so the three classification outcomes — first-pass valid, valid-after-retry, and `degraded` — must be **merged back into one branch before it runs**. Candidates need not clear the Pydantic boundary on the same attempt: one may validate first time while a sibling needs the stricter retry. If selection instead runs per-branch, it silently picks the most material of a *subset*, the sub-workflow returns one result per branch, and the caller consuming the first gets the loser. Verified live: this fired the moment a model that fails validation more often than Haiku was configured (§7), and it returned the wrong disclosure with all figures `ambiguous` ahead of the right one — under a green `status: "ok"`.
   4. **Extract from the winner only.** Self-consistency (n=3) runs on the selected disclosure alone, so the cost is 3 classify + 3 extract calls per ticker rather than 3 × the whole chain.
 - **Self-consistency for numbers.** The language model is sampled **three times at `temperature=0.3`** for every number it extracts (revenue, EPS, guidance figures). A figure is committed only when at least two of the three samples agree (string-exact match after units normalization). Otherwise the field is marked `"ambiguous"` and shown that way in the report — never silently filled.
-- **Sources.** `maya.tase.co.il/en/reports/companies` primary; the Hebrew page as fallback with LLM translation. The Maya site is a JavaScript SPA behind bot protection, so scraping happens **server-side in the quant service** (`/earnings/fetch`, Playwright headless Chromium) — n8n moves only compact disclosure items, mirroring the news pattern (§3.1).
+- **Sources — routed by market (§4.4).** For `tase` tickers: `maya.tase.co.il/en/reports/companies` primary; the Hebrew page as fallback with LLM translation. The Maya site is a JavaScript SPA behind bot protection, so scraping happens **server-side in the quant service** (`/earnings/fetch`, Playwright headless Chromium) — n8n moves only compact disclosure items, mirroring the news pattern (§3.1). For `us` tickers the source is **SEC EDGAR** (§4.1): recent 8-K/10-Q/10-K filings, with the EX-99.\* press-release exhibit text as the bounded excerpt. Only the *fetch source* routes by market — the classify → self-consistency (n=3 @ 0.3) → majority-vote-or-`ambiguous` pipeline below is identical for both, and `/earnings/fetch`'s response shape is unchanged, so the Earnings Agent sub-workflow is market-agnostic.
 - **Where the figures actually live (verified against the live site).** A disclosure is published across three layers, and only the third contains financial figures:
   1. `maya.tase.co.il/en/reports/details/<id>` — the SPA shell. Its `document.body.innerText` is navigation, the report-list sidebar, and a live stock quote. **No disclosure text, but it does contain decoy numbers** (`Last Rate 9,736`, `Change -0.4%`, the security id).
   2. `mayafiles.tase.co.il/rhtm/<bucket>/H<id>.htm` — an iframe holding the MAGNA cover sheet (~1.2 KB): issuer, regulation cited, and the attachment's filename. Still no figures.
@@ -201,7 +201,8 @@ This visibly demonstrates non-trivial prompt engineering, makes the model's reas
 | OHLC (daily + intraday) | Yahoo Finance via`yfinance`                                                    | Free; ~60d of 1–5m bars, ~730d of 1h bars | Alpha Vantage (25 req/day — cache hard)                |
 | News (English)          | NewsAPI                                                                          | Free tier 100 req/day                      | Targeted RSS (Globes, Reuters, Bloomberg, Calcalist EN) |
 | News (Hebrew, fallback) | Ynet / Calcalist RSS                                                             | Free RSS; LLM translates                   | —                                                      |
-| Earnings disclosures    | `maya.tase.co.il/en/reports/companies` (JS SPA, rendered via Playwright headless Chromium server-side); figures come from the disclosure's **PDF attachment** on `mayafiles.tase.co.il` (§3.2), text-extracted with `pypdf` | Free, English where available; best-effort (§13) | Hebrew Maya + LLM translation                           |
+| Earnings disclosures (TASE) | `maya.tase.co.il/en/reports/companies` (JS SPA, rendered via Playwright headless Chromium server-side); figures come from the disclosure's **PDF attachment** on `mayafiles.tase.co.il` (§3.2), text-extracted with `pypdf` | Free, English where available; best-effort (§13) | Hebrew Maya + LLM translation                           |
+| Earnings disclosures (US)   | SEC EDGAR — `data.sec.gov/submissions/CIK##########.json` for recent filings; ticker→CIK via `company_tickers.json`; excerpt from the filing's EX-99.\* press-release exhibit | Free JSON API; requires a declared `User-Agent` (contact email); ~10 req/s limit; plain `httpx`, no Playwright | — (degrades to `ambiguous`, §13)                        |
 | Market context          | Yahoo Finance for`^TA125.TA`, `^GSPC`, `^VIX`                              | Free                                       | —                                                      |
 | Fine-tuned sentiment    | Hugging Face`ProsusAI/finbert` (EN), `avichr/heBERT_sentiment_analysis` (HE) | Local inference via`transformers`        | —                                                      |
 
@@ -241,7 +242,7 @@ The `costs` table is written on every LLM call, including the evaluation harness
 
 ### 4.3 Cleaning and outlier handling
 
-- OHLC: adjusted close; reindex onto the TASE calendar; one-day-gap forward-fill; flag returns beyond 8× MAD.
+- OHLC: adjusted close; reindex onto the **market's session grid** (closed weekdays per the `markets:` config, §4.4 — Fri/Sat for `tase`, Sat/Sun for `us`); one-day-gap forward-fill; flag returns beyond 8× MAD. Multi-day-gap dropping already absorbs exchange holidays for both markets, so no holiday calendar is maintained.
 - News: deduplicate by `url`; drop items where the ticker only appears in tag metadata.
 - Earnings: deduplicate by `(symbol, url)`; **the LLM never invents numbers** (§3.2 self-consistency enforces this).
 
@@ -250,32 +251,77 @@ The `costs` table is written on every LLM call, including the evaluation harness
 `config/universe.yaml`:
 
 ```yaml
-watchlist: ["TEVA.TA","NICE.TA","LUMI.TA","POLI.TA","ESLT.TA"]
-news_window_minutes: 120
+# A mixed watchlist is supported: *.TA symbols are TASE, bare symbols are US (see
+# `markets:` below). The live file ships a trimmed watchlist with the full TA-35
+# list commented out — expanding it is the intended scaling point (§1).
+watchlist: ["LUMI.TA"]
+news_window_minutes: 4320
 earnings_window_days: 5
 earnings_candidates: 3   # disclosures classified per ticker; most material wins (§3.2)
 ohlc_lookback_days: 180
+
+# --- Market abstraction ---------------------------------------------------
+# Every ticker resolves to exactly one market. Derivation: a `*.TA` suffix ⇒
+# `tase`, any bare symbol ⇒ `us`; `market_overrides` wins over the suffix rule
+# when a symbol needs pinning explicitly. Each market bundles the properties
+# that used to be global TASE assumptions.
+#
+# TWO WEEKDAY CONVENTIONS, deliberately kept distinct:
+#   * `closed_weekdays` uses **pandas** numbering (Mon=0 … Sun=6) — it is
+#     consumed by the OHLC session-grid reindex (§4.3).
+#   * `trading_hours.days` uses the **n8n cron** convention (0=Sun) — it is
+#     consumed by the schedule gate (§6.1) and matches `schedule_cron` below.
+# The conversion happens in exactly one place (`quant_service/data/markets.py`).
+markets:
+  tase:
+    closed_weekdays: [4, 5]          # Fri, Sat
+    trading_hours: { tz: "Asia/Jerusalem", days: [0, 1, 2, 3, 4],   # Sun–Thu
+                     open: "09:30", close: "17:25" }
+    earnings_source: maya
+    rss_feed_groups: [en_il, he_il]  # keys into rss_feeds
+    currency: ILS
+  us:
+    closed_weekdays: [5, 6]          # Sat, Sun
+    trading_hours: { tz: "America/New_York", days: [1, 2, 3, 4, 5], # Mon–Fri
+                     open: "09:30", close: "16:00" }
+    earnings_source: edgar
+    rss_feed_groups: [en_us]
+    currency: USD
+market_overrides: {}   # e.g. {SOMESYM: us} — explicit pin; suffix rule otherwise
+
 # Ticker -> query terms used to fetch news (§3.1). *.TA symbols are not searchable
 # on NewsAPI/RSS, so each ticker maps to the company's common name(s) (EN + HE).
+# US tickers get EN-only terms, with the same collision care.
 search_terms:
-  TEVA.TA: ["Teva"]
-  NICE.TA: ["NICE Ltd", "NICE Systems"]
+  TEVA.TA: ["Teva Pharmaceutical", "טבע תעשיות"]
   LUMI.TA: ["Bank Leumi", "Leumi", "לאומי"]
-  POLI.TA: ["Bank Hapoalim", "Hapoalim", "הפועלים"]
-  ESLT.TA: ["Elbit Systems", "Elbit", "אלביט"]
-# RSS feeds fetched server-side by /news/fetch. EN feeds are primary; HE feeds are
-# the §3.1 fallback (LLM translates inline). NewsAPI covers EN separately.
+  AAPL: ["Apple Inc"]   # bare "Apple" floods NewsAPI with non-equity noise — see the file's note
+  # ... full TA-35 + US mappings live in the file
+# RSS feeds fetched server-side by /news/fetch, keyed by **feed group**. A ticker's
+# groups come from its market's `rss_feed_groups`. The group name's prefix before
+# the underscore is the feed language (`en_il`/`en_us` ⇒ en, `he_il` ⇒ he); the
+# suffix is the region. NewsAPI covers EN separately for both markets.
 rss_feeds:
-  en:
+  en_il:
     - "https://www.globes.co.il/webservice/rss/rssfeeder.asmx/FeederNode?iID=1725"
-    - "https://www.calcalistech.com/ctechnews/home/0,7340,L-5211,00.xml"
-  he:
-    - "https://www.calcalist.co.il/GeneralRSS/0,16335,L-8,00.xml"
+  he_il:
     - "https://www.ynet.co.il/Integration/StoryRss6.xml"
-# Cron is evaluated in n8n's TZ setting; set TZ=Asia/Jerusalem (§11.1) so this reads as local.
-# Sun–Thu, hourly from 10:00 to 17:00 local time (covers TASE continuous trading ~09:30–17:25 IDT/IST).
-# Day-of-week: 0=Sunday in n8n cron. DST is handled by the TZ setting, not the cron expression.
-schedule_cron: "0 10-17 * * 0-4"
+    - "https://www.globes.co.il/webservice/rss/rssfeeder.asmx/FeederNode?iID=585"
+  en_us:
+    - "https://finance.yahoo.com/news/rssindex"
+    - "https://www.cnbc.com/id/10000664/device/rss/rss.html"
+# n8n's Schedule Trigger cron is 6-field, SECONDS-FIRST: [sec] [min] [hour] [dom] [month] [dow].
+# The standard 5-field intent is "0 10-23 * * 0-5"; the n8n-correct equivalent is below.
+# Cron is evaluated in n8n's GENERIC_TIMEZONE (§11.1) — set it to Asia/Jerusalem, so the
+# hours read as local Israeli time. Hours 10–23 IL cover BOTH windows: TASE continuous
+# trading ~09:30–17:25 IL, and NYSE 09:30–16:00 ET = 16:30–23:00 IL (15:30–22:00 during
+# the 2–3 week IL/US DST-skew, still inside the range). Day-of-week 0–5 (Sun–Fri IL)
+# covers TASE Sun–Thu plus NYSE Mon–Fri — a US Friday session ends Friday 23:00 IL and
+# never crosses into Saturday. DST is handled by the timezone, not the expression.
+# The cron is deliberately wider than either market: the per-market gate in
+# /runs/start (§6.1) decides which tickers are actually in session, so a fire
+# outside all market hours costs one cheap HTTP call and writes nothing.
+schedule_cron: "0 0 10-23 * * 0-5"
 report_dir: "reports"
 # n8n sub-workflow ids (§6.2). Used by /costs/harvest to attribute each agent
 # sub-execution's LLM calls to an agent name in `costs` (§9.4). Filled in after the
@@ -285,10 +331,12 @@ n8n_workflow_ids:
   sentiment: "KnV1HngeDrOcVcqH"
   earnings: "7SU3ioCng1HsFMkl"
   risk_manager: "NgajAcDX26YE3i98"
-  # chat: "<id>"   # §6.5 chat assistant — added in Step 12 so its tokens reach `costs`
+  chat: "oXFSZwkpmKO8BHRw"   # §6.5 chat assistant — its tokens reach `costs` (§9.4)
 ```
 
-`config/rubric.yaml` holds the Risk Manager rubric thresholds.
+`config/rubric.yaml` holds the Risk Manager rubric thresholds. The rubric, the Risk
+Manager, the dual-sentiment mechanism, the schemas, `costs` and the evals are all
+**market-agnostic** — the market abstraction stops at the data layer.
 
 ---
 
@@ -301,13 +349,13 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
 | `POST /ohlc`       | Cached daily/intraday OHLC for a symbol                                      |
 | `POST /indicators` | RSI, MACD, Bollinger, ATR from cached OHLC                                   |
 | `POST /sentiment`  | FinBERT/HeBERT score for a batch of texts (auto-routes by detected language) |
-| `POST /news/fetch` | Fetch + clean recent news for a ticker (NewsAPI EN + RSS EN/HE) and return compact items plus the few-shot examples; keeps NewsAPI/RSS access and §4.3 cleaning server-side so n8n never fetches or parses raw feeds |
+| `POST /news/fetch` | Fetch + clean recent news for a ticker (NewsAPI EN + the RSS groups of the ticker's market — `markets[<market>].rss_feed_groups`, §4.4) and return compact items plus the few-shot examples; keeps NewsAPI/RSS access and §4.3 cleaning server-side so n8n never fetches or parses raw feeds |
 | `POST /news/store` | Upsert per-article dual-sentiment scores into the `news` table (§4.2); n8n cannot write DuckDB directly |
-| `POST /earnings/fetch` | Scrape + clean recent Maya disclosures for a ticker (EN primary, HE fallback; Playwright headless Chromium) and return compact items **ranked by relevance (§3.2), the top `earnings_candidates` each with a bounded text excerpt extracted from that disclosure's PDF attachment — the only layer carrying financial figures** — plus the few-shot examples; keeps SPA rendering, bot-protection handling, PDF text extraction, ranking, and §4.3 cleaning server-side so n8n never touches raw pages or PDFs |
+| `POST /earnings/fetch` | Fetch + clean recent disclosures for a ticker, **routed by the ticker's market (§4.4)**: Maya for `tase` (EN primary, HE fallback; Playwright headless Chromium), SEC EDGAR for `us` (`httpx`; `url` points at the EDGAR filing index). The response shape is identical for both sources, so the Earnings Agent sub-workflow is market-agnostic. Returns compact items **ranked by relevance (§3.2), the top `earnings_candidates` each with a bounded text excerpt extracted from that disclosure's PDF attachment — the only layer carrying financial figures** — plus the few-shot examples; keeps SPA rendering, bot-protection handling, PDF text extraction, ranking, and §4.3 cleaning server-side so n8n never touches raw pages or PDFs |
 | `POST /earnings/store` | Upsert the classified disclosure + self-consistency extraction into the `earnings` table (§4.2); n8n cannot write DuckDB directly |
 | `POST /report`     | Render PDF from Risk Manager output + run id                                 |
 | `POST /validate`   | Validate an agent's raw LLM JSON against its Pydantic schema in `schemas/` (the §9.4 LLM-boundary guardrail; n8n's embedded Python cannot import the repo's schemas, so validation is served over HTTP) |
-| `POST /runs/start`   | Open a run: mint the `run_id`, write the `runs` row (§4.2), and return the run's config (watchlist + windows from `config/universe.yaml`) so the orchestrator never hardcodes them (§4.4). n8n cannot write DuckDB directly, so every orchestration write is served over HTTP — same precedent as `/news/store` and `/earnings/store` |
+| `POST /runs/start`   | Open a run: mint the `run_id`, write the `runs` row (§4.2), and return the run's config (watchlist + windows from `config/universe.yaml`) so the orchestrator never hardcodes them (§4.4). **In `scheduled` mode this is also the per-market gate (§6.1)**: the watchlist is filtered to tickers whose market is currently in session, and when none is, the call returns `skipped: true` with `run_id: null` **without minting a run id or writing a `runs` row**. `manual` and `chat` runs are never filtered. n8n cannot write DuckDB directly, so every orchestration write is served over HTTP — same precedent as `/news/store` and `/earnings/store` |
 | `POST /runs/finish`  | Close a run: set `finished_at`, `status`, `report_path` on the `runs` row |
 | `POST /recommendations/store` | Upsert one per-ticker `recommendations` row (draft/critique/final + the three agent outputs + `agent_status`), keyed `(run_id, ticker)` (§4.2) |
 | `POST /costs/harvest` | Log the run's LLM costs into `costs` (§4.2, §9.4). Token usage is **not reachable inside an n8n workflow** — the LLM chain node emits only its text and a Code node cannot read the Chat Model sub-node's run data — so the quant service reads the agents' sub-executions from n8n's REST API (`N8N_API_URL`/`N8N_API_KEY`, §11.1) and pulls the real `tokenUsage` (prompt/completion), the model, and each call's `executionTime` (→ `latency_ms`) per LLM call. `usd_cost` is computed server-side from the §7 price table. The orchestrator calls this once after the fan-out, when every sub-execution has finished and been persisted. Idempotent: re-harvesting a `run_id` rewrites the same totals. Degrades (never 500s) if the n8n API is unreachable |
@@ -387,10 +435,19 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
   "tickers":null }                        // optional (§6.5): non-empty ⇒ overrides the
                                           // config watchlist for this run; null/omitted ⇒ full watchlist
 { "run_id":"r_2026-06-22T13:00", "started_at":"2026-06-22T10:00:00+00:00",
-  "mode":"manual",
+  "mode":"manual", "skipped":false,
   "watchlist":["TEVA.TA","NICE.TA", …],   // config/universe.yaml (§4.4), or the `tickers` override
-  "window_minutes":120, "window_days":5, "lookback_days":180,
+                                          // in `scheduled` mode: filtered to in-session markets (§6.1)
+  "window_minutes":4320, "window_days":5, "lookback_days":180,
   "summary":"run r_2026-06-22T13:00 started (manual): 5 ticker(s)." }
+
+// POST /runs/start — scheduled mode, no market in session (§6.1 gate).
+// No run id is minted and NO `runs` row is written; the orchestrator exits on this.
+{ "mode":"scheduled", "tickers":null }
+{ "run_id":null, "started_at":null, "mode":"scheduled", "skipped":true,
+  "watchlist":[],
+  "window_minutes":4320, "window_days":5, "lookback_days":180,
+  "summary":"skipped: no market in session at 2026-06-27T05:00:00+00:00 (tase, us); no runs row written." }
 
 // POST /runs/finish
 { "run_id":"r_2026-06-22T13:00", "status":"ok",      // status ∈ {ok, degraded, error}
@@ -458,11 +515,12 @@ PDF rendering uses **WeasyPrint** over a **Jinja2** template (`templates/report.
 ### 6.1 Triggers and high-level flow
 
 - **Manual Trigger** for the demo.
-- **Schedule Trigger** with `schedule_cron`; the workflow checks the current Asia/Jerusalem time against TASE hours and exits cleanly outside them.
+- **Schedule Trigger** with `schedule_cron` (§4.4), which is deliberately wider than either market — it covers the union of the TASE and NYSE windows in Asia/Jerusalem local time.
+- **Per-market gate, inside the service.** The gate lives in `POST /runs/start` (§5) rather than the workflow, because it needs the `markets:` config and each market's own timezone (`zoneinfo`) to be correct across the ~2–3 week Israel/US DST-skew windows — a fixed offset is wrong for part of the year. In `scheduled` mode the service computes "now" in each market's own timezone and filters the watchlist to the tickers whose market is currently in session. If at least one is, the run proceeds with **only those tickers**; if none is, the service returns `skipped: true` with no `run_id` and **no `runs` row written**, and the workflow exits cleanly on that branch. Manual and chat runs bypass the filter entirely.
 
 Top-level flow:
 
-1. Call `POST /runs/start` — the service mints the `run_id`, writes the `runs` row, and returns the watchlist and window parameters from `config/universe.yaml`.
+1. Call `POST /runs/start` — the service mints the `run_id`, writes the `runs` row, and returns the watchlist and window parameters from `config/universe.yaml`. In `scheduled` mode it may instead return `skipped: true` (no market in session, §5), on which the workflow ends without writing anything.
 2. For each ticker (n8n loop, concurrency 3): call the three analysis sub-workflows in parallel.
 3. Call the Risk Manager sub-workflow once per ticker; it runs the three-stage critique loop internally. Persist each result with `POST /recommendations/store`.
 4. Call `POST /costs/harvest` to log every LLM call of the run into `costs` (§9.4 — token usage is only available from n8n's execution API, so it is harvested once the sub-executions have finished).
@@ -551,12 +609,12 @@ The Earnings agent runs `x-ai/grok-4.3` rather than Haiku 4.5. Note that this is
 ### 8.1 Structure
 
 1. **Header.** Run id, timestamp (Asia/Jerusalem), watchlist, mode.
-2. **Executive summary.** Watchlist counts (long / short / hold / avoid) and the top three highest-conviction calls with one-line rationales.
+2. **Executive summary.** Watchlist counts (long / short / hold / avoid), **grouped by market** when the watchlist spans more than one, and the top three highest-conviction calls with one-line rationales.
 3. **Per-ticker section** (one page per ticker):
-   - Recommendation badge and conviction.
+   - Recommendation badge and conviction, plus the ticker's **market and currency** (§4.4) so figures are never read in the wrong unit.
    - Three agent panels:
      - **Sentiment** — both scores side-by-side, the disagreement value, top articles with citations.
-     - **Earnings** — disclosure title, link to Maya, extracted figures with `confidence` markers (figures marked `ambiguous` are visually distinct).
+     - **Earnings** — disclosure title, link to the source (Maya for `tase`, the EDGAR filing index for `us`), extracted figures with `confidence` markers (figures marked `ambiguous` are visually distinct).
      - **Technical** — indicator snapshot + signal.
    - **Reasoning trace** — draft, critique objections, final decision. This is the headline differentiator of the report.
    - **Price chart thumbnail** — 90-day close + 20/50-day moving averages, generated as PNG by the quant service.
@@ -615,7 +673,7 @@ n8n-investment-team/
 ├── quant_service/
 │   ├── app.py
 │   ├── routers/ {ohlc,indicators,sentiment,news,earnings,report,validate,riskmanager,runs,costs}.py  # news = /news/fetch + /news/store; earnings = /earnings/fetch + /earnings/store; riskmanager = /riskmanager/context (§3.4 prompts + rubric + deterministic facts); runs = /runs/start + /runs/finish + /recommendations/store (§6.1 orchestration writes); costs = /costs/harvest (§9.4)
-│   ├── data/ {yahoo.py, newsapi.py, maya.py, rss.py, news_store.py, earnings_store.py, run_store.py, textclean.py, tls.py, cache.py, ingest.py}  # ingest = OHLC pull/clean CLI (python -m data.ingest); news_store/earnings_store/run_store = table upserts (run_store = runs + recommendations); textclean = shared §4.3 text cleaning + term matching; maya = Playwright scraper + PDF-attachment text extraction (§3.2, pypdf); tls = OS-trust SSL context for httpx
+│   ├── data/ {markets.py, yahoo.py, newsapi.py, maya.py, rss.py, news_store.py, earnings_store.py, run_store.py, textclean.py, tls.py, cache.py, ingest.py}  # markets = symbol→market, market properties, session gate + the single config/universe.yaml reader (§4.4, §6.1); ingest = OHLC pull/clean CLI (python -m data.ingest); news_store/earnings_store/run_store = table upserts (run_store = runs + recommendations); textclean = shared §4.3 text cleaning + term matching; maya = Playwright scraper + PDF-attachment text extraction (§3.2, pypdf); tls = OS-trust SSL context for httpx
 │   ├── indicators/ {calc.py}  # pandas-ta computation behind /indicators (§3.3, §5)
 │   ├── nlp/  {finbert.py, hebert.py, language_detect.py}
 │   ├── pdf/  {render.py, charts.py}
@@ -701,6 +759,8 @@ The grader's rubric explicitly rewards "understanding of solution limitations." 
 - **HeBERT is a general Hebrew sentiment model, not finance-specific.** Performance on financial-news Hebrew is worse than FinBERT on financial-news English; the evaluation harness measures this rather than glossing it.
 - **Maya scraping is best-effort.** The site is a JavaScript SPA behind bot protection, so it is rendered server-side in a headless browser (Playwright Chromium); layout changes or a bot-block can still break the harvest. The fallback is widening to the Hebrew page, which loses some structural fields. The earnings agent will mark fields `ambiguous` — or degrade to "no recent disclosure" — rather than guess.
 - **Financial figures depend on a PDF attachment, two layers below the report page** (§3.2). The disclosure page itself carries no figures, so the excerpt is extracted from the attached PDF. That adds two failure modes the report surfaces honestly rather than hiding: a PDF that is a scan (no text layer) or an unreachable attachment yields `ambiguous` figures despite a successfully classified disclosure, and `mayafiles` URL-pattern changes would break extraction while leaving classification intact.
+- **EDGAR excerpts come from 8-K press-release exhibits (EX-99.\*), whose formatting varies wildly** between issuers and filing types. Extraction is a bounded text excerpt, not a structured parse, so a figure that does not appear verbatim in the exhibit falls back to `ambiguous` exactly as with a Maya PDF — safe, but possibly thin for some issuers.
+- **NewsAPI's free tier (100 req/day) binds harder on a bigger universe.** A mixed TA-35 + S&P 500 watchlist multiplies per-ticker news calls; the practical mitigations are trimming the watchlist or a paid tier, and a quota-exhausted fetch degrades the summary rather than fabricating coverage.
 - **The Risk Manager's three-pass loop reduces overconfidence but does not guarantee correctness.** It is a structured reasoning aid, not a financial-validity guarantee. The PDF disclaims this explicitly.
 - **No live execution and no return measurement.** The system produces recommendations and rationales; it does not measure whether those recommendations would have made money. A backtest is a natural next step and is listed in `docs/results.md` as future work.
 - **OpenRouter pricing and model availability** can change. The system is designed for one-field model swaps to absorb this.
@@ -712,5 +772,5 @@ The grader's rubric explicitly rewards "understanding of solution limitations." 
 
 - **Maya scraping resilience** as above; if it becomes infeasible, the Earnings agent degrades to "no recent disclosure" rather than fabricating.
 - **NewsAPI coverage** as above.
-- **Schedule frequency.** Hourly during TASE hours is the default; a less-frequent schedule mostly saves NewsAPI quota without changing decisions given the two-hour news window.
+- **Schedule frequency.** Hourly during each market's trading hours is the default; a less-frequent schedule mostly saves NewsAPI quota without changing decisions given the news window.
 

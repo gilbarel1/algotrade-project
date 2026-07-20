@@ -77,11 +77,14 @@ nodes) so the id in `n8n_workflow_ids` stays valid. Step 10 added a **Schedule T
 **Schedule Trigger (Step 10, §6.1/§11.2).** The scheduled path fires on `schedule_cron`
 (`0 10-17 * * 0-4`, hourly Sun–Thu 10:00–17:00). For it to fire at all: (a) set
 `TZ=Asia/Jerusalem` in n8n's env so the cron reads as local time, and (b) toggle the workflow
-**Active** — inactive workflows never run on schedule. Each fire passes an in-workflow gate
-(Sun–Thu 09:30–17:30 Asia/Jerusalem) *before* `/runs/start`; outside those hours it dead-ends at
-a No-Op with no `runs` row. The Manual Trigger bypasses the gate. To test the outside-hours branch
-without waiting for the weekend, set `TASE_GATE_FAKE_NOW` (ISO timestamp) in n8n's env — a
-**dev-only** override that pins the gate's clock; leave it unset in production. See README §7.
+**Active** — inactive workflows never run on schedule. The cron spans both markets' windows in
+Israeli local time; the **per-market gate lives in the quant service** (`/runs/start`, §6.1), which
+filters the watchlist to the markets currently in session. When none is, it returns
+`skipped: true` with **no `runs` row written** and the workflow dead-ends at a No-Op. Manual and
+chat triggers bypass the gate. To test the outside-hours branch without waiting for the weekend,
+set `MARKET_GATE_FAKE_NOW` (ISO timestamp **with a UTC offset**) in the *quant service's* env — a
+**dev-only** override that pins the gate's clock; leave it unset in production. (This replaces the
+former n8n-side `TASE_GATE_FAKE_NOW`, which is no longer read.) See README §7.
 
 ### Technical Agent (`agents/technical.json`, Step 3)
 

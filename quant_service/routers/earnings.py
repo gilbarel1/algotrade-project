@@ -22,23 +22,18 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
-import yaml
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from data import cache, earnings_store, maya
+from data.markets import load_config as _load_config
 
 router = APIRouter()
 
 # routers/earnings.py -> routers/ -> quant_service/ -> repo root.
+# Config itself is read by `data/markets.py` (the single §4.4 reader).
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-_CONFIG_PATH = os.path.join(_REPO_ROOT, "config", "universe.yaml")
 _FEWSHOT_PATH = os.path.join(_REPO_ROOT, "prompts", "earnings_examples.jsonl")
-
-
-def _load_config() -> dict:
-    with open(_CONFIG_PATH, "r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh) or {}
 
 
 def _load_fewshot() -> List[dict]:
