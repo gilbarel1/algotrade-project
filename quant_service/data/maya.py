@@ -172,6 +172,32 @@ _LANG_MIN_LETTERS = 200  # below this the sample is too small to call
 
 _PAGE_TIMEOUT_MS = 45_000
 _SETTLE_MS = 3_000  # extra wait after load for late XHRs / list hydration
+
+# §11.2: external calls are transient-failure aware, mirroring the Yahoo path's
+# retry/backoff (data/yahoo.py). A single dropped connection used to fail the
+# whole ticker: the EN page raised net::ERR_CONNECTION_ABORTED, the HE fallback
+# raised net::ERR_NETWORK_ACCESS_DENIED, and the Earnings Agent degraded for the
+# run even though the site answered normally seconds later (observed live,
+# orchestrator execution 120).
+#
+# The retry is deliberately NARROW. A bot-block or a bad certificate will not
+# clear by trying again, and hammering Maya is exactly what the failure-caching
+# in `fetch_disclosures` exists to prevent — so only these transport-level
+# Chromium net errors are retried. Everything else degrades on the first attempt,
+# as before.
+_GOTO_ATTEMPTS = 3
+_GOTO_BACKOFF_SECONDS = 2.0
+_TRANSIENT_NET_ERRORS = (
+    "ERR_CONNECTION_ABORTED",
+    "ERR_CONNECTION_RESET",
+    "ERR_CONNECTION_CLOSED",
+    "ERR_CONNECTION_FAILED",
+    "ERR_NETWORK_ACCESS_DENIED",
+    "ERR_NETWORK_CHANGED",
+    "ERR_EMPTY_RESPONSE",
+    "ERR_SOCKET_NOT_CONNECTED",
+    "ERR_TIMED_OUT",
+)
 # Bound on the disclosure text that reaches the LLM (§2). Sized so a results
 # press release's highlights *and* its outlook/guidance block both fit — see
 # _pdf_excerpt; ~1.5k tokens, still far below any page's full text (30-90k chars).
@@ -313,8 +339,28 @@ def _reason(exc: Exception) -> str:
     return text.splitlines()[0][:200]
 
 
+def _is_transient_net_error(exc: Exception) -> bool:
+    """True for Chromium transport errors that a retry can plausibly clear.
+
+    Deliberately excludes bot-blocks, certificate errors and a missing Chromium
+    binary: those are stable conditions where retrying only wastes the run's
+    time and adds load to Maya.
+    """
+    text = str(exc)
+    return any(code in text for code in _TRANSIENT_NET_ERRORS)
+
+
 def _load_list_page(page, url: str) -> None:
-    page.goto(url, timeout=_PAGE_TIMEOUT_MS, wait_until="domcontentloaded")
+    """Load a Maya list page, retrying only transient transport failures."""
+    for attempt in range(1, _GOTO_ATTEMPTS + 1):
+        try:
+            page.goto(url, timeout=_PAGE_TIMEOUT_MS, wait_until="domcontentloaded")
+            break
+        except Exception as exc:  # noqa: BLE001 - re-raised below unless transient
+            if attempt == _GOTO_ATTEMPTS or not _is_transient_net_error(exc):
+                raise
+            time.sleep(_GOTO_BACKOFF_SECONDS * attempt)
+
     try:
         page.wait_for_load_state("networkidle", timeout=_PAGE_TIMEOUT_MS)
     except Exception:  # noqa: BLE001 - SPAs may never go network-idle
