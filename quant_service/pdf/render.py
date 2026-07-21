@@ -37,7 +37,7 @@ from zoneinfo import ZoneInfo
 import yaml
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from data import cache, earnings_store, news_store, run_store
+from data import cache, earnings_store, markets, news_store, run_store
 from indicators import calc
 from pdf import charts
 
@@ -155,10 +155,36 @@ def build_context(
         "run_id": run_id,
         "summary": summary or "",
         "header": header,
-        "exec": {"counts": counts, "top3": top3},
+        "exec": {
+            "counts": counts,
+            "top3": top3,
+            # §8.1: counts are grouped by market only when the watchlist spans
+            # more than one — a single-market run reads as it always did.
+            "by_market": _counts_by_market(enriched),
+        },
         "recommendations": enriched,
         "methodology": methodology,
     }
+
+
+def _counts_by_market(enriched: List[dict]) -> List[dict]:
+    """Per-market recommendation counts (§8.1), or [] for a single-market run.
+
+    Returning [] rather than one group is what lets the template stay silent on
+    a TA-35-only run: the grouping is information only when there is more than
+    one market to tell apart.
+    """
+    groups: Dict[str, dict] = {}
+    for e in enriched:
+        name = e.get("market") or "unknown"
+        group = groups.setdefault(
+            name, {"market": name, "currency": e.get("currency") or "", "counts": {}}
+        )
+        call = (e.get("final") or {}).get("recommendation") or "unknown"
+        group["counts"][call] = group["counts"].get(call, 0) + 1
+    if len(groups) < 2:
+        return []
+    return [groups[name] for name in sorted(groups)]
 
 
 def _enrich_ticker(con, rec: dict, threshold: float) -> dict:
@@ -194,8 +220,12 @@ def _enrich_ticker(con, rec: dict, threshold: float) -> dict:
     # the chart (each would otherwise re-read / potentially re-ingest).
     prices = _prices(con, ticker)
 
+    market, currency = _market_labels(ticker)
+
     return {
         "ticker": ticker,
+        "market": market,
+        "currency": currency,
         "status": rec.get("status") or "ok",
         "draft": rec.get("draft"),
         "critique": rec.get("critique"),
@@ -208,6 +238,20 @@ def _enrich_ticker(con, rec: dict, threshold: float) -> dict:
         "indicators": _indicator_snapshot(prices),
         "chart_uri": _chart_uri(prices, ticker),
     }
+
+
+def _market_labels(ticker: str) -> tuple[str, str]:
+    """The ticker's market and reporting currency for the §8.1 header.
+
+    A mixed watchlist puts ILS and USD figures in one PDF, so each ticker page
+    states its unit — an ILS revenue read as USD is a 3x error. Best-effort like
+    the other enrichments: an unresolvable market degrades the tag, not the page.
+    """
+    try:
+        name = markets.market(ticker)
+        return name, markets.currency(name)
+    except Exception:  # noqa: BLE001
+        return "", ""
 
 
 def _citations(con, ticker: str) -> List[dict]:

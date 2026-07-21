@@ -40,6 +40,7 @@ def fetch_newsapi(
     *,
     page_size: int = 50,
     now: Optional[datetime] = None,
+    domains: Optional[List[str]] = None,
 ) -> List[dict]:
     """Return recent English NewsAPI items matching `terms` within the window.
 
@@ -47,6 +48,17 @@ def fetch_newsapi(
     language: "en"}``. `published_at` is left as NewsAPI's UTC ISO string. The
     caller applies the §4.3 dedupe / term-in-text cleaning; this function only
     fetches and normalizes shape.
+
+    `domains` restricts the search to an allowlist of publishers — the market's
+    `newsapi_domains` (§4.4). NewsAPI searches the whole web, so an unrestricted
+    company name returns whatever else shares it: measured live, "NVIDIA" gave 48
+    items led by PyPI package listings and "Google" gave 41 led by a Go-language
+    tutorial and a US-Iran story. Restricting the *publisher* rather than the
+    *wording* is what fixed it — an earlier attempt to AND finance keywords onto
+    the query collapsed recall instead, because NewsAPI's `searchIn` then demands
+    both the company and a finance word in the title/description: "Apple Inc"
+    returned 0 items and "Alphabet OR Google" returned 1. With the allowlist the
+    same two queries return 33 and 28 items, all of them equity coverage.
     """
     if not terms:
         return []
@@ -66,6 +78,10 @@ def fetch_newsapi(
         "searchIn": "title,description",
         "apiKey": api_key,
     }
+    # Omitted entirely when the market declares no allowlist, so an unrestricted
+    # market (tase) keeps its existing behavior byte-for-byte.
+    if domains:
+        params["domains"] = ",".join(d.strip() for d in domains if str(d).strip())
 
     try:
         resp = httpx.get(

@@ -98,6 +98,9 @@ _REPORT_ID_RE = re.compile(r"/reports/(?:details/)?(\d+)")
 _PDF_TIMEOUT_S = 60
 
 # A currency amount with a magnitude word, or an explicit per-share figure.
+# Public because `data/edgar.py` anchors its EX-99 excerpts on the same pattern:
+# "where do the figures start" is one question with one answer, whichever market
+# the document came from (the Hebrew alternatives simply never fire on EDGAR).
 # Deliberately strict: it selects *where in the PDF the excerpt starts*, so a
 # loose pattern would anchor on legal boilerplate ("Form S-8", "Rule 13a-16")
 # instead of the results summary (verified against NICE's Q1 6-K).
@@ -110,13 +113,24 @@ _PDF_TIMEOUT_S = 60
 # matches none of that and would leave a Hebrew disclosure's figures
 # unanchored — "ambiguous" despite being present. The majority vote already
 # normalizes these units, so they must be findable here too.
-_MONEY_RE = re.compile(
+MONEY_RE = re.compile(
     r"[$€₪]\s?\d[\d,]*(?:\.\d+)?\s*(?:billion|million|bn\b)"
     r"|\d[\d,]*(?:\.\d+)?\s*(?:מיליון|מיליארד|אלפי)?\s*(?:ש[\"״]ח|₪|שקלים|שקל)"
     r"|\d[\d,]*(?:\.\d+)?\s*(?:מיליון|מיליארד)"
     r"|(?:EPS|earnings per share|רווח למניה)[^\n]{0,40}?[$€₪]?\s?\d+\.\d+",
     re.I,
 )
+# Which LAYER an excerpt was taken from (§5 `excerpt_source`). Shared with
+# `data/edgar.py` so the vocabulary is one set across both markets, because §3.2
+# selection compares candidates on it: a press release states the HEADLINE
+# revenue/EPS/guidance in prose, while a periodic report's statements are tables
+# whose windowed excerpt may show segment or note lines instead — measured, an
+# Apple 10-Q window offered "$14.7 billion" and "$13.7 billion", neither of which
+# is total revenue, against the press release's "$111.2 billion".
+PRESS_RELEASE = "press_release"      # EDGAR EX-99.* exhibit; Maya PDF attachment
+PRIMARY_DOCUMENT = "primary_document"  # EDGAR 10-Q/10-K primary iXBRL document
+COVER_SHEET = "cover_sheet"          # Maya rendered report page (last resort)
+
 _PDF_MIN_MONEY_HITS = 3  # per page, to clear boilerplate false positives
 _PDF_PAGE_SPAN = 3  # pages kept from the anchor (highlights + outlook + tables)
 
@@ -201,7 +215,7 @@ _TRANSIENT_NET_ERRORS = (
 # Bound on the disclosure text that reaches the LLM (§2). Sized so a results
 # press release's highlights *and* its outlook/guidance block both fit — see
 # _pdf_excerpt; ~1.5k tokens, still far below any page's full text (30-90k chars).
-_EXCERPT_MAX = 6_000
+EXCERPT_MAX = 6_000
 _TTL_SECONDS = 600
 _API_LIMIT = 30  # server-enforced maximum page size (verified live)
 _MAX_PAGES = 2  # per term; a single company rarely files >60 reports per window
@@ -312,8 +326,9 @@ def _scrape_ticker(
                 # candidates that will actually be classified.
                 items = rank_items(items)
                 for item in items[:candidates]:
-                    excerpt, exc_errors = _fetch_excerpt(page, item["url"])
+                    excerpt, layer, exc_errors = _fetch_excerpt(page, item["url"])
                     item["excerpt"] = excerpt
+                    item["excerpt_source"] = layer if excerpt else ""
                     # Re-label from the document itself. The row's language came
                     # from its title, but Maya's English site serves AI-translated
                     # titles for Hebrew filings — so a Hebrew disclosure arrives
@@ -549,6 +564,7 @@ def _rows_to_items(rows: List[dict], ticker: str, window_days: int) -> List[dict
                 "url": url,
                 "language": row.get("language") or "en",
                 "excerpt": "",
+                "excerpt_source": "",
             }
         )
     items.sort(key=lambda i: i["published_at"] or "0000", reverse=True)
@@ -702,7 +718,7 @@ def _pdf_excerpt(report_id: str) -> Tuple[str, List[str]]:
     that PDF and returns a bounded excerpt.
 
     A results PDF opens with several pages of SEC/MAGNA cover boilerplate, so
-    the first _EXCERPT_MAX chars of the document would contain no figures at
+    the first EXCERPT_MAX chars of the document would contain no figures at
     all. The excerpt is therefore anchored on the first page carrying at least
     _PDF_MIN_MONEY_HITS strict money matches — in practice the press release's
     highlights page — and spans _PDF_PAGE_SPAN pages so the outlook/guidance
@@ -759,7 +775,7 @@ def _pdf_excerpt(report_id: str) -> Tuple[str, List[str]]:
         (
             n
             for n, text in enumerate(pages)
-            if len(_MONEY_RE.findall(text)) >= _PDF_MIN_MONEY_HITS
+            if len(MONEY_RE.findall(text)) >= _PDF_MIN_MONEY_HITS
         ),
         0,
     )
@@ -767,7 +783,7 @@ def _pdf_excerpt(report_id: str) -> Tuple[str, List[str]]:
     # `errors` is dropped deliberately on success: a 404 on the preferred URL
     # followed by a hit on the fallback is a normal resolution, not a degrade —
     # surfacing it would mark an otherwise-complete agent "degraded" (§9.4).
-    return clean_text(window, _EXCERPT_MAX), []
+    return clean_text(window, EXCERPT_MAX), []
 
 
 def _text_language(text: str) -> Optional[str]:
@@ -788,12 +804,12 @@ def _text_language(text: str) -> Optional[str]:
     return "he" if hebrew / len(letters) >= _LANG_HEBREW_SHARE else "en"
 
 
-def _fetch_excerpt(page, url: str) -> Tuple[str, List[str]]:
+def _fetch_excerpt(page, url: str) -> Tuple[str, str, List[str]]:
     """Return the bounded verbatim disclosure text for the §3.2 extraction.
 
     Prefers the PDF attachment (the only layer with financial figures — §3.2);
     falls back to the rendered detail page, which yields the MAGNA cover text
-    at best. Capped at _EXCERPT_MAX so only short text reaches the LLM (§2).
+    at best. Capped at EXCERPT_MAX so only short text reaches the LLM (§2).
     Failure degrades to "" — extraction then sees just the title and figures
     come out "ambiguous", never invented.
     """
@@ -802,7 +818,7 @@ def _fetch_excerpt(page, url: str) -> Tuple[str, List[str]]:
     if report_id:
         text, pdf_errors = _pdf_excerpt(report_id)
         if text:
-            return text, pdf_errors
+            return text, PRESS_RELEASE, pdf_errors
         errors.extend(pdf_errors)
 
     try:
@@ -813,6 +829,6 @@ def _fetch_excerpt(page, url: str) -> Tuple[str, List[str]]:
             pass
         page.wait_for_timeout(_SETTLE_MS)
         text = page.evaluate("() => document.body ? document.body.innerText : ''")
-        return clean_text(text or "", _EXCERPT_MAX), errors
+        return clean_text(text or "", EXCERPT_MAX), COVER_SHEET, errors
     except Exception as exc:  # noqa: BLE001
-        return "", errors + [f"maya excerpt: {_reason(exc)}"]
+        return "", "", errors + [f"maya excerpt: {_reason(exc)}"]

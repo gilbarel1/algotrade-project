@@ -99,6 +99,7 @@ DuckDB tables. Re-run it any time.
 | `OPENROUTER_API_KEY` | Every LLM call. **Also paste it into the n8n OpenRouter credential** — n8n reads credentials from its own store, not from `.env`. |
 | `NEWSAPI_API_KEY` | English news for the Sentiment Agent. Optional: without it, `/news/fetch` returns RSS-only and the agent reports `status: "degraded"`. |
 | `N8N_API_KEY` | Cost logging. n8n → *Settings → n8n API* → create key. Without it the cost harvest degrades cleanly; it never fails a run. |
+| `EDGAR_USER_AGENT` | US earnings disclosures. SEC requires a declared contact address (`your-name your-email@example.com`); without it `/earnings/fetch` degrades for US tickers rather than fabricating. TASE tickers are unaffected. |
 
 Everything else in `.env` can keep its default — see [Configuration](#configuration).
 
@@ -183,6 +184,13 @@ A third entry point alongside manual and scheduled runs: open <http://localhost:
 *"what do you think about Teva?"*. The assistant resolves the name to `TEVA.TA`, runs the **same**
 pipeline for that one ticker (~40–80 s), and reports the Risk Manager's call, conviction, rationale
 and the PDF path. Follow-ups resolve from memory — *"and NICE?"* analyses `NICE.TA`.
+
+**Both markets, any name — not just the watchlist.** Ask about *"Nvidia"* and it resolves to `NVDA`,
+because the suffix is what selects the market: US/S&P 500 names take the bare symbol, TA-35 names
+take `.TA`. You do **not** need a `config/universe.yaml` entry for a US name first — news search
+terms fall back to the SEC registrant name already cached by the EDGAR path (`"NVIDIA CORP"` →
+`"NVIDIA"`), so any S&P 500 company can be analysed ad-hoc. Hand-tuned `search_terms` still win
+where they exist, and the endpoint summary says when a term was derived.
 
 The chat agent is a **router, not an analyst**: it may only call the pipeline and relay what comes
 back. Ask it for a price target and it declines rather than inventing one — that refusal is scored
@@ -293,6 +301,7 @@ it into both processes.
 | `OPENROUTER_API_KEY` | — | <https://openrouter.ai> → **Keys**. |
 | `NEWSAPI_API_KEY` | — | <https://newsapi.org/register> → free tier (100 req/day). Optional. |
 | `N8N_API_KEY` | — | n8n → *Settings → n8n API*. The only place n8n exposes LLM token usage. |
+| `EDGAR_USER_AGENT` | — | Any name + contact email, per [SEC fair-access policy](https://www.sec.gov/os/webmaster-faq#developers). Needed only for US tickers. |
 | `QUANT_SERVICE_URL` | `http://127.0.0.1:8000` | Single source for where the service lives: n8n uses it, and the runner derives uvicorn's port from it. Use `http://host.docker.internal:8000` if n8n runs in Docker. |
 | `N8N_API_URL` | `http://localhost:5678` | Where the quant service reaches n8n's REST API. |
 | `N8N_CHAT_WEBHOOK_URL` | — | §6.5 chat front end → n8n. The Chat Trigger node's **Production URL** (ends in `/chat`). Unset, the page says so rather than answering. |
@@ -361,7 +370,7 @@ Built and reviewed **one step at a time** (detail in `CLAUDE.md`).
 | 11 | Evaluation harness (`python -m eval.run`) | ✅ done |
 | 12 | Chat assistant front end (bonus, §6.5) | ✅ done |
 | 13 | S&P 500 market abstraction (config + calendar + news/schedule gate) | ✅ done |
-| 14 | SEC EDGAR earnings source + report currency | ⬜ |
+| 14 | SEC EDGAR earnings source + report currency | ✅ done |
 | 15 | README + supporting docs for a grader | ⬜ |
 
 Step 15 (README) is intentionally last: it is the grader-facing README and demo docs, so it is
@@ -376,8 +385,31 @@ its Yahoo suffix (`*.TA` → `tase`, bare → `us`), and `config/universe.yaml`'
 the trading calendar, trading hours, news feeds, earnings source and currency per-market instead of
 globally Israeli. A mixed watchlist like `["TEVA.TA","AAPL"]` is one list, not two code paths — US
 symbols reindex onto a Mon–Fri session grid (Fridays kept, no manufactured Sunday bars), pull the
-`en_us` RSS group, and gate on NYSE hours. Earnings still route to Maya for every ticker until
-Step 14 adds SEC EDGAR.
+`en_us` RSS group, and gate on NYSE hours.
+
+Step 14 completed it with the **US earnings source**: `/earnings/fetch` routes on the market's
+`earnings_source` — Maya for `tase`, **SEC EDGAR** for `us` (`quant_service/data/edgar.py`: ticker →
+CIK → recent 8-K/10-Q/10-K → the EX-99.* press-release exhibit as the verbatim excerpt, plain
+`httpx`, no Playwright). The response shape is identical for both sources, so the Earnings Agent
+sub-workflow is market-agnostic and needed no changes. EDGAR requires a declared contact address —
+set `EDGAR_USER_AGENT` in `.env` (`npm run doctor` flags it) or US tickers degrade rather than
+fabricate. The PDF now prints each ticker's **market and currency** and groups the executive
+summary by market when the watchlist spans more than one, so an ILS figure is never read as USD.
+
+A follow-up to Step 14 closed the last TA-35 assumption in the chat path: the assistant's system
+prompt now states both ticker conventions with worked examples (`"Nvidia"` → `NVDA`,
+`"Teva"` → `TEVA.TA`), and `/news/fetch` derives a search term from the SEC registrant name for any
+US ticker missing from `search_terms`. Without that, every S&P 500 name except `AAPL` came back
+news-blind and conviction-capped.
+
+Two follow-on fixes came out of testing it on Google. NewsAPI searches the whole web, so US brand
+names pull in whatever else shares them — unrestricted, `"NVIDIA"` returned PyPI package listings and
+`"Google"` returned a Go-language tutorial. The fix is a **publisher allowlist** per market
+(`markets.us.newsapi_domains`), which lifted those queries to 28 and 33 items, all equity coverage;
+`tase` declares none, so Israeli coverage is untouched. And the derived name is *wrong*, not just
+thin, when a company is reported under a different name than it registers under: `GOOGL` registers as
+"Alphabet Inc." and returned zero articles. Those are hand-tuned — `GOOGL: ["Alphabet", "Google"]` —
+and hand-tuned always beats derived.
 
 ---
 
@@ -518,6 +550,17 @@ instance must have been started with the two variables above.
   SEC/MAGNA boilerplate, the excerpt is *anchored* on the first page holding real currency
   figures rather than the document's start. Unreachable or scanned PDFs (no text layer) degrade
   to the cover sheet, and figures come out `ambiguous` — never invented.
+- **US filings use the same three-layer logic against EDGAR.** `data/edgar.py` resolves the
+  ticker to a CIK, lists recent 8-K/10-Q/10-K filings, and excerpts the **EX-99.\* press-release
+  exhibit** — because an 8-K's own document is a cover note ("a press release is attached as
+  Exhibit 99.1") carrying no figure at all, exactly like Maya's cover sheet. A 10-Q/10-K has no
+  such exhibit, so it falls back to its primary document, which *is* the financial statement; an
+  8-K without a press release gets no excerpt and its figures come out `ambiguous`. That is
+  deliberate: reading an 8-K's iXBRL cover page instead returns runs of `true true NASDAQ
+  0000320193`, which costs LLM budget and teaches the model nothing. The excerpt is anchored on
+  the first cluster of currency figures, sharing `maya.MONEY_RE` — one definition of "where do the
+  figures start", whichever market the document came from. No Playwright: EDGAR is a documented
+  JSON API, so plain `httpx` plus the SEC-required `EDGAR_USER_AGENT` suffices.
 - **`WeasyPrint` on Windows (Step 9) needs the GTK3 runtime.** `pip install weasyprint`
   provides the Python package but not its native libraries, so the first render (or
   `import weasyprint`) fails with `cannot load library 'libgobject-2.0-0.dll'`. Install the

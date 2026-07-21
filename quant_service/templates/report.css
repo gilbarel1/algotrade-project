@@ -1,10 +1,10 @@
-/* TA-35 report print stylesheet (§8.1, §8.2). Consumed by WeasyPrint. */
+/* Investment report print stylesheet (§8.1, §8.2). Consumed by WeasyPrint. */
 
 @page {
   size: A4;
   margin: 1.4cm 1.3cm;
   @bottom-center {
-    content: "TA-35 Investment Report — educational, not investment advice — page " counter(page) " / " counter(pages);
+    content: "Investment Report — educational, not investment advice — page " counter(page) " / " counter(pages);
     font-size: 7pt;
     color: #888;
   }
@@ -34,6 +34,10 @@ table.meta td { padding: 1pt 10pt 1pt 0; }
 .exec-summary { margin-bottom: 12pt; }
 ul.counts { list-style: none; padding: 0; margin: 4pt 0; }
 ul.counts li { display: inline-block; margin-right: 12pt; font-size: 10pt; }
+/* Per-market counts — rendered only on a mixed watchlist (§8.1). */
+table.by-market { border-collapse: collapse; font-size: 8.5pt; margin: 4pt 0 6pt; }
+table.by-market th { text-align: left; color: #666; font-weight: 600; padding: 1pt 12pt 1pt 0; }
+table.by-market td { padding: 1.5pt 12pt 1.5pt 0; }
 ol.top-calls { margin: 4pt 0 0; padding-left: 16pt; }
 ol.top-calls li { margin-bottom: 2pt; }
 .rationale { color: #333; }
@@ -65,6 +69,11 @@ ol.top-calls li { margin-bottom: 2pt; }
 .ticker-head { display: flex; align-items: baseline; gap: 8pt; margin-bottom: 8pt; }
 .ticker-head h2 { border: 0; margin: 0; padding: 0; flex: 0 0 auto; }
 .ticker-page.degraded .ticker-head { color: #92400e; }
+/* Market + reporting currency, so figures are never read in the wrong unit. */
+.market-tag {
+  border: 0.5pt solid #ccc; color: #555; background: #f4f4f5;
+  font-size: 7.5pt; font-weight: 600; padding: 0.5pt 5pt; border-radius: 3pt;
+}
 .degraded-flag {
   background: #fde68a; color: #92400e; font-size: 7pt; font-weight: 700;
   padding: 0.5pt 5pt; border-radius: 3pt;

@@ -1,16 +1,18 @@
-{# TA-35 investment report (§8.1). Rendered by pdf/render.py with WeasyPrint. #}
+{# Investment report (§8.1). Rendered by pdf/render.py with WeasyPrint.
+   The watchlist may mix markets (TA-35 + S&P 500, §1), so the title is not
+   market-specific and every ticker page states its own market and currency. #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>TA-35 Investment Report — {{ run_id }}</title>
+  <title>Investment Report — {{ run_id }}</title>
   <link rel="stylesheet" href="report.css">
 </head>
 <body>
 
   {# 1. Header — run id, timestamp (Asia/Jerusalem), watchlist, mode #}
   <header class="report-header">
-    <h1>TA-35 Investment Recommendation Report</h1>
+    <h1>Investment Recommendation Report</h1>
     <table class="meta">
       <tr><th>Run</th><td>{{ header.run_id }}</td>
           <th>Generated</th><td>{{ header.generated_at }}</td></tr>
@@ -33,6 +35,27 @@
     </ul>
     {% else %}
     <p class="muted">No recommendations in this run.</p>
+    {% endif %}
+
+    {# Grouped by market only when the watchlist spans more than one (§8.1) #}
+    {% if exec.by_market %}
+    <table class="by-market">
+      <tr><th>Market</th><th>Currency</th><th>Calls</th></tr>
+      {% for group in exec.by_market %}
+      <tr>
+        <td>{{ group.market | upper }}</td>
+        <td>{{ group.currency }}</td>
+        <td>
+          {% for call in ["long", "short", "hold", "avoid"] %}
+            {% if group.counts.get(call) %}<span class="badge {{ call }}">{{ call }}</span> {{ group.counts[call] }}&nbsp;{% endif %}
+          {% endfor %}
+          {% for call, n in group.counts.items() if call not in ["long","short","hold","avoid"] %}
+            <span class="badge unknown">{{ call }}</span> {{ n }}&nbsp;
+          {% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
     {% endif %}
 
     {% if exec.top3 %}
@@ -59,6 +82,9 @@
       {% else %}
         <span class="badge big unknown">no call</span>
       {% endif %}
+      {# Market + currency (§8.1): a mixed watchlist puts ILS and USD figures in
+         one report, so no figure below is ever read in the wrong unit. #}
+      {% if rec.market %}<span class="market-tag">{{ rec.market | upper }} · {{ rec.currency }}</span>{% endif %}
       {% if rec.status == 'degraded' %}<span class="degraded-flag">DEGRADED</span>{% endif %}
     </div>
 

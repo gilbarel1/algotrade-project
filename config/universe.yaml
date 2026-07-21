@@ -57,6 +57,49 @@ markets:
     earnings_source: edgar           # SEC EDGAR (§4.1); wired up in Step 14
     rss_feed_groups: [en_us]
     currency: USD
+    # Where /news/fetch gets search terms for a ticker that has no hand-tuned
+    # `search_terms` entry below (§3.1). `sec_registry` derives them from the
+    # SEC registrant name already cached by the EDGAR earnings path
+    # ("NVIDIA CORP" -> "NVIDIA"). Without it, any S&P 500 name the config has
+    # never seen gets no news, its Sentiment agent degrades, and §3.4 caps
+    # conviction at medium — which matters because the chat assistant (§6.5)
+    # accepts ad-hoc tickers from the whole index, not just the watchlist.
+    # Omitted for `tase`: Israeli issuers are not SEC registrants, and their
+    # Hebrew search terms cannot be derived from anywhere.
+    search_terms_fallback: sec_registry
+    # Publisher allowlist for the NewsAPI query (§3.1). NewsAPI searches the
+    # whole web, and US brand names are ordinary words there: unrestricted,
+    # "Google" returned a Go-language tutorial and a US-Iran story, "NVIDIA"
+    # returned PyPI package listings. Restricting the PUBLISHER fixes that
+    # without touching the query — measured 2026-07-21, "Alphabet OR Google"
+    # went from 41 mixed items to 33 all-equity ones, and "NVIDIA" to 28.
+    # (Narrowing the query wording instead was tried and reverted: NewsAPI then
+    # requires a finance word in the title/description too, and "Apple Inc"
+    # dropped to 0 items.)
+    # `tase` deliberately has NO allowlist — Israeli coverage comes from Globes/
+    # Ynet RSS plus NewsAPI on distinctive Hebrew/company terms, which is not
+    # noisy, and an allowlist would silently exclude the Israeli press.
+    newsapi_domains:
+      - reuters.com
+      - bloomberg.com
+      - cnbc.com
+      - marketwatch.com
+      - finance.yahoo.com
+      - seekingalpha.com
+      - investing.com
+      - fool.com
+      - benzinga.com
+      - barrons.com
+      - thestreet.com
+      - investors.com
+      - zacks.com
+      - biztoc.com
+      - globenewswire.com
+      - businesswire.com
+      - prnewswire.com
+      - ft.com
+      - wsj.com
+      - forbes.com
 
 # Explicit symbol -> market pin, overriding the suffix rule. Empty by default;
 # the suffix rule covers every symbol currently in use.
@@ -135,6 +178,26 @@ search_terms:
   # given, and zero matches is a valid "no coverage" result (§13), not a failure.
   # Add further S&P 500 names here as the watchlist grows — verify each the same way.
   AAPL: ["Apple Inc"]
+
+  # --- Brand != SEC registrant name (the class that MUST be curated) ---
+  # A US ticker with no entry here falls back to the SEC registrant name
+  # (`search_terms_fallback: sec_registry`, §3.1), which is correct for most of
+  # the index: NVDA registers as "NVIDIA CORP", MSFT as "MICROSOFT CORP" — the
+  # brand and the registration agree, so the derived term finds real coverage.
+  #
+  # It fails exactly where a company is REPORTED under a different name than it
+  # REGISTERS under. GOOGL registers as "Alphabet Inc." and the derived term
+  # "Alphabet" returned 0 articles over a 3-day window (measured live), because
+  # the press writes "Google". That is not a thin-coverage result, it is the
+  # wrong query — so these are hand-tuned, and hand-tuned always wins.
+  #
+  # Both forms are listed (OR-ed at query time) so the holding company and the
+  # operating brand are both caught. The bare brand is safe here because these
+  # are checked terms, not derived ones — but note "Meta" alone is not, since it
+  # is an ordinary English prefix, hence "Meta Platforms" + "Facebook".
+  GOOGL: ["Alphabet", "Google"]
+  GOOG:  ["Alphabet", "Google"]
+  META:  ["Meta Platforms", "Facebook"]
 
 # RSS feeds fetched server-side by /news/fetch, keyed by FEED GROUP. A ticker's
 # groups come from its market's `rss_feed_groups` (see `markets:` above), so a

@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from data import cache, markets, news_store, newsapi, rss
+from data import cache, edgar, markets, news_store, newsapi, rss
 from data.markets import load_config as _load_config
 from data.textclean import clean_text, mentions_term
 from nlp import language_detect
@@ -115,17 +115,39 @@ def news_fetch(req: NewsFetchRequest):
     window = req.window_minutes or int(config.get("news_window_minutes", 120))
     terms = (config.get("search_terms") or {}).get(req.ticker, [])
     feeds = config.get("rss_feeds") or {}
-
-    if not terms:
-        # No mapping for this ticker: cannot search news for a *.TA symbol.
+    try:
+        market_cfg = markets.market_config(markets.market(req.ticker, config), config)
+    except ValueError as exc:  # `market_overrides` names a market not in config
         return {
             "ticker": req.ticker,
             "items": [],
             "few_shot": _load_fewshot(),
-            "summary": (
-                f"degraded: no search_terms configured for {req.ticker}; "
-                "cannot query news."
-            ),
+            "summary": f"degraded: {exc}; cannot query news.",
+        }
+
+    derived_errors: List[str] = []
+    derived = False
+    if not terms:
+        # Hand-tuned terms always win; this only runs when the config has never
+        # seen the ticker. The chat assistant (§6.5) accepts any S&P 500 name
+        # ad-hoc, so most US tickers reaching here are unconfigured by design —
+        # deriving a term from the SEC registrant name is what keeps their
+        # Sentiment agent from degrading (§3.1, §4.4 `search_terms_fallback`).
+        if market_cfg.get("search_terms_fallback") == "sec_registry":
+            terms, derived_errors = edgar.company_search_terms(req.ticker)
+            derived = bool(terms)
+
+    if not terms:
+        # Still nothing: a TASE symbol absent from config (whose Hebrew terms
+        # cannot be derived), or the registry lookup itself failed.
+        reason = "; ".join(derived_errors) if derived_errors else (
+            f"no search_terms configured for {req.ticker}"
+        )
+        return {
+            "ticker": req.ticker,
+            "items": [],
+            "few_shot": _load_fewshot(),
+            "summary": f"degraded: {reason}; cannot query news.",
         }
 
     raw_items: List[dict] = []
@@ -135,7 +157,12 @@ def news_fetch(req: NewsFetchRequest):
     try:
         raw_items.extend(
             newsapi.fetch_newsapi(
-                terms, window, os.environ.get("NEWSAPI_API_KEY", "")
+                terms,
+                window,
+                os.environ.get("NEWSAPI_API_KEY", ""),
+                # The market's publisher allowlist (§4.4). Absent for `tase`, so
+                # Israeli names keep their unrestricted Step-5 behavior.
+                domains=market_cfg.get("newsapi_domains"),
             )
         )
     except newsapi.NewsAPIError as exc:
@@ -146,9 +173,7 @@ def news_fetch(req: NewsFetchRequest):
     # local press. The group name is `<lang>_<region>`, so the feed's language is
     # its prefix; rss.fetch_rss carries that through per group rather than
     # detecting it, and it routes FinBERT vs HeBERT downstream (§3.1).
-    for group in markets.market_config(markets.market(req.ticker, config), config).get(
-        "rss_feed_groups"
-    ) or []:
+    for group in market_cfg.get("rss_feed_groups") or []:
         urls = feeds.get(group) or []
         if not urls:
             continue
@@ -165,6 +190,10 @@ def news_fetch(req: NewsFetchRequest):
         f"{len(cleaned)} items after cleaning: {n_en} EN, {n_he} HE "
         f"(window {window}m)."
     )
+    if derived:
+        # Say so: a derived term is weaker than a hand-tuned one, so thin or
+        # off-target coverage here is explainable rather than mysterious (§4.4).
+        summary += f" Search term derived from the SEC registrant name: {terms[0]!r}."
     # Degrade only when a source failed AND coverage may be incomplete because of
     # it. All sources healthy with zero items is genuine "no coverage" (§13).
     if errors:

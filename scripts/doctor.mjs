@@ -66,6 +66,10 @@ const keyState = (key, note) => {
 keyState("OPENROUTER_API_KEY", "n8n needs it for every LLM call (paste into the n8n credential)");
 keyState("NEWSAPI_API_KEY", "/news/fetch falls back to RSS-only");
 keyState("N8N_API_KEY", "/costs/harvest degrades — no costs rows, run still succeeds");
+keyState(
+  "EDGAR_USER_AGENT",
+  "/earnings/fetch degrades for US tickers (SEC requires a declared contact); TASE unaffected",
+);
 
 // DuckDB
 const dbPath = env.DUCKDB_PATH || path.join(REPO_ROOT, "quant_service", "store.duckdb");
