@@ -693,6 +693,106 @@ main {
   color: #fff;
 }
 
+/* --- Rendered markdown inside an assistant bubble (scoped so user/degraded
+   bubbles keep their plain pre-wrap look) --- */
+
+.bubble.markdown {
+  white-space: normal;
+  padding: 13px 16px;
+}
+
+.bubble.markdown > :first-child {
+  margin-top: 0;
+}
+
+.bubble.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.bubble.markdown p {
+  margin: 0 0 8px;
+}
+
+.bubble.markdown h4,
+.bubble.markdown h5 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--accent-2);
+  margin: 14px 0 8px;
+}
+
+.bubble.markdown h4 {
+  font-size: 16px;
+}
+
+.bubble.markdown h5 {
+  font-size: 14.5px;
+}
+
+.bubble.markdown strong {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.bubble.markdown em {
+  font-style: italic;
+}
+
+.bubble.markdown ul {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+
+.bubble.markdown li {
+  margin: 3px 0;
+}
+
+.bubble.markdown li::marker {
+  color: var(--accent-2);
+}
+
+.bubble.markdown code {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 0.9em;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+
+/* --- Report download button (a bot message that carried a report_path) --- */
+
+.msg.has-report {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.report-dl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: var(--user);
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  text-decoration: none;
+  border: 1px solid transparent;
+  transition: transform 0.15s ease, background 0.2s ease;
+}
+
+.report-dl svg {
+  color: color-mix(in srgb, #fff 88%, var(--accent-2));
+}
+
+.report-dl:hover {
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--user) 88%, #fff);
+}
+
 .msg.degraded .bubble {
   border-color: var(--degraded);
   color: var(--degraded);
@@ -817,6 +917,9 @@ main {
     transition: none;
   }
   .card:hover {
+    transform: none;
+  }
+  .report-dl:hover {
     transform: none;
   }
 }

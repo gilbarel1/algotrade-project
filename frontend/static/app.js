@@ -21,13 +21,99 @@ if (!sessionId) {
   sessionStorage.setItem(SESSION_KEY, sessionId);
 }
 
-function addMessage(text, role, extraClass) {
+// A tiny, dependency-free markdown renderer for the assistant's replies. The reply
+// is still untrusted text, so this ESCAPES HTML first and only then applies a fixed
+// set of inline/block transforms — nothing here emits an attribute, URL, or raw tag,
+// so there is no injection surface (equivalent safety to the old textContent path).
+function renderMarkdown(src) {
+  const esc = (s) =>
+    s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  const inline = (s) =>
+    esc(s)
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
+      .replace(/(^|[^_])_([^_\n]+)_/g, "$1<em>$2</em>");
+
+  const lines = src.replace(/\r\n/g, "\n").split("\n");
+  const html = [];
+  let listBuf = [];
+
+  const flushList = () => {
+    if (listBuf.length) {
+      html.push("<ul>" + listBuf.map((li) => `<li>${inline(li)}</li>`).join("") + "</ul>");
+      listBuf = [];
+    }
+  };
+
+  let paraBuf = [];
+  const flushPara = () => {
+    if (paraBuf.length) {
+      html.push("<p>" + paraBuf.map(inline).join("<br>") + "</p>");
+      paraBuf = [];
+    }
+  };
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    const heading = /^(#{1,3})\s+(.*)$/.exec(line);
+    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+
+    if (heading) {
+      flushList();
+      flushPara();
+      const tag = heading[1].length <= 2 ? "h4" : "h5";
+      html.push(`<${tag}>${inline(heading[2])}</${tag}>`);
+    } else if (bullet) {
+      flushPara();
+      listBuf.push(bullet[1]);
+    } else if (line.trim() === "") {
+      flushList();
+      flushPara();
+    } else {
+      flushList();
+      paraBuf.push(line);
+    }
+  }
+  flushList();
+  flushPara();
+  return html.join("");
+}
+
+function addMessage(text, role, extraClass, opts) {
   const wrap = document.createElement("div");
   wrap.className = `msg ${role}${extraClass ? " " + extraClass : ""}`;
   const bubble = document.createElement("div");
   bubble.className = "bubble";
-  bubble.textContent = text; // textContent, not innerHTML — the reply is untrusted text
+  // Only a successful assistant reply is rendered as markdown; user text, pending
+  // and degraded messages stay plain (textContent) — safest and matches their tone.
+  if (role === "bot" && !extraClass) {
+    bubble.classList.add("markdown");
+    bubble.innerHTML = renderMarkdown(text);
+  } else {
+    bubble.textContent = text; // textContent, not innerHTML — the reply is untrusted text
+  }
   wrap.appendChild(bubble);
+
+  // A report to download surfaces as a clean button, never an absolute path.
+  if (opts && opts.reportUrl) {
+    wrap.classList.add("has-report");
+    const dl = document.createElement("a");
+    dl.className = "report-dl";
+    dl.href = opts.reportUrl;
+    dl.setAttribute("download", "");
+    dl.innerHTML =
+      '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">' +
+      '<path fill="currentColor" d="M12 3a1 1 0 0 1 1 1v8.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.42l2.3 2.3V4a1 1 0 0 1 1-1ZM5 18a1 1 0 0 1 1 1v1h12v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Z"/>' +
+      "</svg><span>Download report (PDF)</span>";
+    wrap.appendChild(dl);
+  }
+
   log.appendChild(wrap);
   log.scrollTop = log.scrollHeight;
   return wrap;
@@ -62,7 +148,7 @@ form.addEventListener("submit", async (event) => {
     const data = await res.json().catch(() => ({}));
     pending.remove();
     const reply = data.reply || `degraded: no reply from the server (HTTP ${res.status}).`;
-    addMessage(reply, "bot", data.degraded ? "degraded" : "");
+    addMessage(reply, "bot", data.degraded ? "degraded" : "", { reportUrl: data.report_url });
   } catch (err) {
     pending.remove();
     addMessage(`degraded: ${err.message}`, "bot", "degraded");
