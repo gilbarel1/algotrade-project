@@ -1,62 +1,91 @@
-# algotrade-project
+# AI Investment Team
 
-An **n8n-based multi-agent system that produces an automated investment recommendation
-report for a TA-35 watchlist**. Four specialist agents — **Sentiment, Earnings, Technical,
-and Risk Manager** — independently analyze each ticker; a coordinating workflow synthesizes
-their conclusions, runs a deliberate three-stage critique pass, and renders a justified
-**long / short / hold / avoid** recommendation as a PDF report saved to disk.
+An **n8n multi-agent system that turns a stock watchlist into a justified, written investment
+recommendation** — delivered as a PDF report. Four specialist agents — **Sentiment, Earnings,
+Technical, and Risk Manager** — each analyze a ticker independently; a coordinating workflow
+gathers their conclusions, runs a deliberate three-stage critique, and renders a **long / short /
+hold / avoid** call with the full reasoning behind it. The watchlist can mix **TA-35 (Tel Aviv)**
+and **S&P 500 (US)** names in one list.
 
-Two things distinguish it from a baseline LLM pipeline:
-1. **Dual sentiment** — every headline is scored twice (an LLM *and* a fine-tuned
-   transformer: FinBERT for English, HeBERT for Hebrew); their disagreement is surfaced,
-   not hidden.
-2. **Self-critiquing Risk Manager** — a draft → devil's-advocate critique → final loop that
-   stress-tests its own reasoning, all three passes visible in the report.
+Two things set it apart from a single-prompt LLM pipeline:
 
-> The complete technical design lives in **[`docs/design.md`](docs/design.md)** — the single
-> source of truth for architecture, contracts, schemas, and parameters. The build proceeds
-> **one step at a time** per **[`CLAUDE.md`](CLAUDE.md)**.
+1. **Dual sentiment** — every headline is scored twice: by an LLM *and* by a fine-tuned
+   transformer (FinBERT for English, HeBERT for Hebrew). When they disagree, the report shows the
+   split instead of hiding it.
+2. **A self-critiquing Risk Manager** — a *draft → devil's-advocate critique → final* loop that
+   stress-tests its own recommendation. All three passes are printed in the report.
+
+A third guardrail runs through the whole system: **it never invents financial numbers.** Earnings
+figures are committed only when repeated self-consistency samples agree on a value that appears
+verbatim in the source; otherwise they are marked `ambiguous`.
+
+**The four recommendations.** Each ticker gets exactly one call plus a `conviction`
+(`low` / `medium` / `high`) — how strongly the evidence supports it. The first three are directional
+views on the stock; the fourth says the picture isn't clear enough to take one:
+
+| Call | What it means for the stock |
+|---|---|
+| **`long`** | Bullish. The outlook points up — a candidate to **buy / hold a long position**, expecting the price to rise. |
+| **`short`** | Bearish. The outlook points down — a candidate to **sell / avoid / short**, expecting the price to fall. |
+| **`hold`** | Neutral. No clear edge in either direction right now — **stay put and wait** rather than open or change a position. |
+| **`avoid`** | Sit it out. The available information is too thin or unreliable to judge the stock — **not a view that it will fall**, just that there isn't enough to justify a call. |
+
+Conviction reflects how well the evidence lines up: `high` when everything agrees, stepping down to
+`medium` around near-term earnings risk, conflicting signals, or gaps in the data. The exact
+thresholds live in `config/rubric.yaml` (design §3.4).
+
+> Everything is **local and educational**. The system produces analysis and rationale — it does
+> **not** trade, place orders, or measure returns.
+
+![A per-ticker report page — dual-sentiment panel, earnings figures, technical snapshot, news citations](docs/screenshots/report_ticker_page.png)
 
 ---
 
-## Architecture at a glance
+## How it works
 
-Two layers joined by one HTTP boundary (§2 of the design):
+Two layers joined by one HTTP boundary:
 
-```
-                  ┌─────────────────────────────────────────────┐
-   Trigger ─────► │  n8n orchestration  (workflows + OpenRouter) │
- (manual /        │  fan-out per ticker → 3 agents → Risk Manager│
-  scheduled)      └───────────────┬─────────────────────────────┘
-                                  │ HTTP (JSON only — small payloads)
-                                  ▼
-                  ┌─────────────────────────────────────────────┐
-                  │  quant_service  (Python + FastAPI)           │
-                  │  /ohlc /indicators /sentiment /report          │
-                  │  /validate /riskmanager/context                │
-                  │  pandas-ta · FinBERT/HeBERT · WeasyPrint     │
-                  └───────────────┬─────────────────────────────┘
-                                  ▼
-                          DuckDB (store.duckdb)
-              prices · news · earnings · runs · recommendations · costs
-```
+- **n8n orchestration** runs the workflows and makes every LLM call (via **OpenRouter**). It holds
+  **no machine-learning code**.
+- **A local FastAPI "quant service"** does everything that needs a real library — technical
+  indicators (`pandas-ta`), transformer sentiment (FinBERT/HeBERT), PDF rendering (WeasyPrint) —
+  and owns the DuckDB cache. n8n's embedded Python can't import those libraries, so all heavy data
+  and computation stay server-side; only short text and scores ever cross the LLM boundary.
 
-- **n8n** orchestrates and makes all LLM calls (via OpenRouter). It holds **no ML code**.
-- **quant_service** does everything that needs a real library — technical indicators,
-  transformer sentiment, and PDF rendering — and owns the DuckDB cache.
-- **Why the split?** n8n's embedded Python can't import `pandas-ta`, Transformers, or PDF
-  libraries, so all heavy data and computation stay server-side; only short text and scores
-  cross the LLM boundary.
+![Architecture](docs/architecture.svg)
 
-**Where the build stands:** Steps 0–13 are done — the full team runs end-to-end, persists its
-results, and renders the **PDF report** (`/report`): per-ticker pages with the dual-sentiment
-panel, the three-pass reasoning trace, earnings figures with confidence markers, news
-citations, a price chart, and a methodology footer. The orchestrator also runs on a
-**market-hours schedule** — a mixed TA-35 + S&P 500 watchlist is supported, and a scheduled run
-analyzes only the tickers whose market (`tase` | `us`) is currently in session — alongside the
-manual and chat triggers. An **evaluation harness** (`npm run eval`, §9) scores the Sentiment and
-Earnings agents against hand-labeled fixtures and prints a one-page metrics summary. See the
-[roadmap](#build-roadmap).
+The pipeline, per ticker: the orchestrator fans out the three analysis agents in parallel, the
+Risk Manager consumes all three through its critique loop, and the result is persisted to DuckDB
+and rendered into `reports/YYYY-MM-DD/HHMM/report.pdf`.
+
+### The four agents
+
+Three specialists gather independent evidence; the Risk Manager weighs it into the final call.
+
+| Agent | What it does |
+|---|---|
+| **Sentiment** | Reads recent news on the ticker and scores the mood — twice, with an LLM and a fine-tuned transformer — surfacing where the two disagree. |
+| **Earnings** | Finds the latest disclosure (Maya for Tel Aviv, SEC EDGAR for US), classifies it, and extracts the reported figures **only when they appear verbatim** — otherwise `ambiguous`. |
+| **Technical** | Computes price indicators (RSI, MACD, Bollinger Bands, ATR) from history and reads a momentum signal (bullish, bearish, overbought, oversold…). |
+| **Risk Manager** | Synthesizes the three signals and runs the *draft → critique → final* loop to issue the **call + conviction** with a written rationale. |
+
+Each specialist returns a compact, schema-validated result — or degrades honestly (`status: "degraded"`)
+if its data source fails, rather than guessing.
+
+### Three ways to run it
+
+All three reuse the identical *fan-out → Risk Manager → persist → PDF* path:
+
+| Entry point | What it's for |
+|---|---|
+| **Manual trigger** | Run the whole watchlist on demand from the n8n editor. Never gated by market hours. |
+| **Schedule trigger** | Hourly across both markets' trading windows. A **per-market gate** analyzes only the tickers whose market (`tase` \| `us`) is currently open, so a fire at 11:00 Israel time runs the TA-35 names and one at 20:00 runs the US names. |
+| **Chat assistant** | Ask *"what do you think about Teva?"* at a small web UI. It resolves the name to a ticker, runs the pipeline for that one name (~40–80 s), and reports the Risk Manager's call. It is a **router, not an analyst** — it relays what the pipeline returns and declines to invent a price target or figure of its own. |
+
+Because every ticker resolves to a market from its Yahoo suffix (`*.TA` → Tel Aviv, bare symbol →
+US), a **mixed watchlist** like `["TEVA.TA", "AAPL"]` is one list, not two code paths — each name
+uses its market's trading calendar, news feeds, earnings source (Maya for TA-35, SEC EDGAR for US),
+and currency.
 
 ---
 
@@ -64,20 +93,25 @@ Earnings agents against hand-labeled fixtures and prints a one-page metrics summ
 
 | Tool | Version | Notes |
 |---|---|---|
-| **Python** | 3.11–3.13 | The quant service. |
+| **Python** | 3.11–3.13 | Runs the quant service. |
 | **Node.js** | ≥ 20 | Runs the dev scripts and n8n itself (via `npx` — nothing to install by hand). |
 | **Git** | any recent | — |
-| **OpenRouter account** | — | Every LLM call. Pay-as-you-go; a few dollars covers many runs. |
+| **OpenRouter account** | — | Every LLM call. Pay-as-you-go; a five-ticker run costs ~$0.04–$0.08. |
 | **NewsAPI account** | free tier | Optional — English news for the Sentiment Agent; it falls back to RSS without one. |
 
-The quant service and its endpoints work **without n8n and without any API keys**. Keys are
-only needed once you run the agents.
+> **Windows only:** WeasyPrint (PDF rendering) needs the **GTK3 runtime** once — install the
+> [tschoonj GTK-for-Windows installer](https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer/releases)
+> (`gtk3-runtime-*-win64.exe`, keep "add to PATH"), then restart your shell. Without it, `/report`
+> degrades to `pdf_path: null` rather than crashing.
+
+The quant service and its endpoints work **without n8n and without any API keys** — keys are only
+needed once you run the agents.
 
 ---
 
 ## Setup & quick start
 
-### 1. Clone, then bootstrap once
+### 1. Clone and bootstrap once
 
 ```bash
 git clone <repo-url>
@@ -85,21 +119,23 @@ cd algotrade-project
 npm run setup
 ```
 
-`npm run setup` is idempotent and does the whole bootstrap: creates `quant_service/.venv`,
-installs `requirements.txt`, downloads the Playwright Chromium the Earnings agent needs,
-copies `.env.example` → `.env` (**never** overwriting an existing one), and creates the seven
-DuckDB tables. Re-run it any time.
+`npm run setup` is idempotent and needs **no API keys** to run: it creates `quant_service/.venv`,
+installs `requirements.txt`, downloads the Playwright Chromium the Earnings agent needs, copies
+`.env.example` → `.env` (**never** overwriting an existing one), and creates the DuckDB tables.
 
 > First run downloads PyTorch and a headless Chromium — budget a few minutes and ~2 GB.
 
 ### 2. Add your keys to `.env`
 
+Run step 1 **first** — it generates `.env` from the template. Then put your keys in that
+generated **`.env`** file (not in `.env.example`, which stays keyless and committed).
+
 | Key | Needed for |
 |---|---|
 | `OPENROUTER_API_KEY` | Every LLM call. **Also paste it into the n8n OpenRouter credential** — n8n reads credentials from its own store, not from `.env`. |
 | `NEWSAPI_API_KEY` | English news for the Sentiment Agent. Optional: without it, `/news/fetch` returns RSS-only and the agent reports `status: "degraded"`. |
-| `N8N_API_KEY` | Cost logging. n8n → *Settings → n8n API* → create key. Without it the cost harvest degrades cleanly; it never fails a run. |
-| `EDGAR_USER_AGENT` | US earnings disclosures. SEC requires a declared contact address (`your-name your-email@example.com`); without it `/earnings/fetch` degrades for US tickers rather than fabricating. TASE tickers are unaffected. |
+| `N8N_API_KEY` | LLM cost logging. n8n → *Settings → n8n API* → create key. Without it the cost harvest degrades cleanly; it never fails a run. |
+| `EDGAR_USER_AGENT` | US earnings disclosures. SEC requires a declared contact (`your-name your-email@example.com`); without it `/earnings/fetch` degrades for US tickers rather than fabricating. TASE tickers are unaffected. |
 
 Everything else in `.env` can keep its default — see [Configuration](#configuration).
 
@@ -109,161 +145,75 @@ Everything else in `.env` can keep its default — see [Configuration](#configur
 npm run dev
 ```
 
-One command, all three processes: it starts the quant service, waits for its `/health`, then
-starts the chat front end and n8n. Output is prefixed `[svc]` / `[web]` / `[n8n]` in a single
-terminal, and **Ctrl-C stops all of them**.
+One command starts all three processes — the quant service, the chat front end, and n8n — loading
+`.env` into each and setting the n8n variables the workflows require. Output is prefixed
+`[svc]` / `[web]` / `[n8n]` in a single terminal, and **Ctrl-C stops all of them**.
 
 | | |
 |---|---|
 | quant service | <http://localhost:8000> — interactive API docs at `/docs` |
-| chat front end | <http://localhost:8001> — §6.5 conversational entry point |
+| chat front end | <http://localhost:8001> |
 | n8n editor | <http://localhost:5678> |
-
-`npm run dev` also loads `.env` into **both** processes and sets the n8n variables the
-workflows require. If you ever start the service or n8n by hand, read *What the runner wires
-up* under [Troubleshooting](#troubleshooting) first — there are four footguns it covers for
-you.
 
 ### 4. Verify
 
 In a second terminal, with `npm run dev` running:
 
 ```bash
-npm run smoke
-# Expect: OK for /ohlc, /indicators, /sentiment, /report, /validate,
-# /riskmanager/context, /runs/*, then "All endpoints OK."
+npm run smoke      # Expect: OK for every endpoint, then "All endpoints OK."
 ```
+
+> **First `/sentiment` call is slow** — it downloads FinBERT + HeBERT (~1.7 GB) into `HF_HOME` and
+> loads them into memory. Later calls reuse the in-process pipeline.
 
 ### 5. Import the n8n workflows (one-time, in the UI)
 
-This is the one part the scripts can't do for you — importing mints new workflow ids and
-credentials must be selected in the editor. Full walkthrough:
-**[`n8n/README_credentials.md`](n8n/README_credentials.md)**. The short version:
+This is the one part the scripts can't do — importing mints new workflow ids and credentials must
+be selected in the editor. Full walkthrough: **[`n8n/README_credentials.md`](n8n/README_credentials.md)**.
+The short version:
 
 1. In n8n, create the **OpenRouter** credential once (paste `OPENROUTER_API_KEY`).
 2. *Workflows → Import from File* for each of `n8n/agents/*.json`, then
-   `n8n/orchestrator.workflow.json`, then `n8n/chat_assistant.workflow.json` (§6.5).
-3. Open each **Chat Model** node and re-select your OpenRouter credential — imported JSONs
-   carry a `REPLACE_AFTER_IMPORT` placeholder. (The Earnings Agent has **two** such nodes.)
-4. Copy each imported workflow's id (it's in the editor URL, `/workflow/<id>`) into
-   `config/universe.yaml → n8n_workflow_ids`. The orchestrator calls its agents **by id**, so
-   these must match.
+   `n8n/orchestrator.workflow.json`, then `n8n/chat_assistant.workflow.json`.
+3. Open each **Chat Model** node and re-select your OpenRouter credential — imported JSONs carry a
+   `REPLACE_AFTER_IMPORT` placeholder. (The Earnings Agent has **two** such nodes.)
+4. Copy each imported workflow's id (from the editor URL, `/workflow/<id>`) into
+   `config/universe.yaml → n8n_workflow_ids`. The orchestrator calls its agents **by id**, so these
+   must match.
 
 ### 6. Run the team
 
-Hit **Execute workflow** on the orchestrator. It opens a run, fans the three analysis agents
-out over the watchlist (concurrency 3), calls the Risk Manager per ticker, persists each
-result, harvests the run's LLM costs, and closes the run.
+Hit **Execute workflow** on the orchestrator. It opens a run, fans the three analysis agents out
+over the watchlist (concurrency 3), calls the Risk Manager per ticker, persists each result,
+harvests the run's LLM costs, and writes the PDF.
 
-> **Trim the watchlist for a first run.** The committed watchlist is all 35 TA-35 names — that
-> is 35 × 4 sub-workflows and burns the NewsAPI free tier (100 req/day) in one go. Set
-> `watchlist: ["TEVA.TA","ESLT.TA"]` in `config/universe.yaml`; the orchestrator reads it from
-> the service, so no workflow edit is needed.
+> **Trim the watchlist for a first run.** The full TA-35 list is 35 × 4 sub-workflows and burns the
+> NewsAPI free tier (100 req/day) in one go. Set `watchlist: ["TEVA.TA", "AAPL"]` in
+> `config/universe.yaml` — the orchestrator reads it from the service, so no workflow edit is needed.
 
-Check what the run wrote:
-
-```bash
-npm run costs      # every LLM call of the run, priced per the §7 table
-```
-
-Expect one `runs` row, one `recommendations` row per ticker with `draft`, `critique`, `final`
-and `agent_status` populated, and `costs` rows per `(run_id, agent, model)`.
-
-To run a **single agent** standalone, pin mock input on its Execute Workflow Trigger:
-
-- Technical — `[{ "ticker":"TEVA.TA","lookback_days":180,"run_id":"r_test" }]`
-- Sentiment — `[{ "ticker":"TEVA.TA","window_minutes":43200,"run_id":"r_test" }]`
-- Earnings — `[{ "ticker":"TEVA.TA","window_days":30,"run_id":"r_test" }]`
-
-Widen the windows as shown: the 2-hour news and 5-day earnings defaults are often legitimately
-empty, which looks like a bug but isn't.
-
-### 7. Ask the team in chat (§6.5)
-
-A third entry point alongside manual and scheduled runs: open <http://localhost:8001> and ask
-*"what do you think about Teva?"*. The assistant resolves the name to `TEVA.TA`, runs the **same**
-pipeline for that one ticker (~40–80 s), and reports the Risk Manager's call, conviction, rationale
-and the PDF path. Follow-ups resolve from memory — *"and NICE?"* analyses `NICE.TA`.
-
-**Both markets, any name — not just the watchlist.** Ask about *"Nvidia"* and it resolves to `NVDA`,
-because the suffix is what selects the market: US/S&P 500 names take the bare symbol, TA-35 names
-take `.TA`. You do **not** need a `config/universe.yaml` entry for a US name first — news search
-terms fall back to the SEC registrant name already cached by the EDGAR path (`"NVIDIA CORP"` →
-`"NVIDIA"`), so any S&P 500 company can be analysed ad-hoc. Hand-tuned `search_terms` still win
-where they exist, and the endpoint summary says when a term was derived.
-
-The chat agent is a **router, not an analyst**: it may only call the pipeline and relay what comes
-back. Ask it for a price target and it declines rather than inventing one — that refusal is scored
-by `npm run eval` (`chat_refusal` row).
-
-One-time wiring, after importing `n8n/chat_assistant.workflow.json` (see step 5):
-
-1. Put the chat workflow's id in `config/universe.yaml → n8n_workflow_ids.chat` so its tokens
-   reach `costs` as the `chat` agent.
-2. Open the **`run_investment_analysis`** tool node and point its *Workflow* at your imported
-   **orchestrator** — it ships as a third `REPLACE_AFTER_IMPORT` placeholder (the other two are
-   the Chat Model credential and the trigger's webhook id). Until it points at a real workflow,
-   the assistant has nothing to call and every question fails.
-3. Open the **Chat Trigger** node, copy its **Production URL** (ends in `/chat`), and set
-   `N8N_CHAT_WEBHOOK_URL` in `.env`. Unset, the page says so instead of answering.
-4. **Publish/activate the orchestrator.** The chat tool reaches it through an *Execute Workflow
-   Trigger*, and n8n refuses to execute an inactive workflow — the assistant will report
-   *"the workflow is not active"* until you do. (Activating it also arms the Schedule Trigger; see
-   step 8.)
-
-A chat-initiated run is a first-class run: `runs.mode = "chat"`, a `recommendations` row, `costs`
-rows, and a PDF on disk exactly as a manual run produces.
-
-### 8. Scheduled runs (per-market hours)
-
-The orchestrator also carries a **Schedule Trigger** (`schedule_cron` from `config/universe.yaml`,
-`0 10-23 * * 0-5` — hourly, Sun–Fri 10:00–23:00 Israeli time, spanning **both** markets' windows:
-TASE 09:30–17:25 IL and NYSE 09:30–16:00 ET = 16:30–23:00 IL). For the cron to fire on *local* time you must set
-**`GENERIC_TIMEZONE=Asia/Jerusalem`** in n8n's environment — n8n evaluates Schedule Trigger crons in
-`GENERIC_TIMEZONE`, **not** `TZ`; left unset it defaults to `America/New_York` and the schedule
-fires at the wrong hours (this is a common n8n footgun). Keep `TZ=Asia/Jerusalem` as well (OS clock).
-The workflow must also be **Published/Active** (in n8n 2.x the *Publish* button top-right; older
-builds have an Active toggle) — inactive workflows never fire on schedule. n8n does **not** backfill
-missed cron ticks, so if the process isn't running at the exact top of the hour that fire is skipped.
-The Manual Trigger is unaffected and always runs.
-
-The cron is deliberately wider than either market, because the **per-market gate lives in the quant
-service**, not the workflow (Step 13): `POST /runs/start` in `scheduled` mode filters the watchlist
-to the tickers whose market is currently in session — computing "now" in each market's own timezone
-via `zoneinfo`, so the ~2–3 week Israel/US DST-skew windows stay correct. A scheduled fire at 11:00
-Israeli time therefore analyzes only the TASE names; one at 20:00 analyzes only the US names. When
-**no** market is in session the service returns `skipped: true` with `run_id: null` and **no `runs`
-row written**, and the workflow exits at the `Skip (No Market In Session)` No-Op. Manual and chat
-runs are never filtered. Scheduled runs are recorded with `mode: "scheduled"`; manual with
-`mode: "manual"`, chat with `mode: "chat"`.
-
-**Testing the gate deterministically** (it reads the real clock, so you can't force off-hours on
-demand): set `MARKET_GATE_FAKE_NOW` to an ISO timestamp **with a UTC offset** in the environment of
-the **quant service** (not n8n — the gate moved there in Step 13; this replaces the old
-`TASE_GATE_FAKE_NOW`). **Dev-only — leave it unset in production.**
+Then inspect what the run wrote:
 
 ```bash
-# No market in session → skipped:true, no runs row
-MARKET_GATE_FAKE_NOW=2026-07-25T10:00:00+00:00   # a Saturday
-
-# TASE open, NYSE shut → watchlist filtered to the *.TA names
-MARKET_GATE_FAKE_NOW=2026-07-21T08:00:00+00:00   # Tue 11:00 IL / 04:00 ET
-
-# NYSE open, TASE shut → watchlist filtered to the US names
-MARKET_GATE_FAKE_NOW=2026-07-21T17:00:00+00:00   # Tue 20:00 IL / 13:00 ET
+npm run costs      # every LLM call of the run, priced per the model table below
 ```
 
-Restart the quant service with the var set, then:
+Expect one `runs` row, one `recommendations` row per ticker (with `draft`, `critique`, `final` and
+`agent_status` populated), and `costs` rows per `(run_id, agent, model)`.
 
-```bash
-curl -s -X POST http://localhost:8000/runs/start \
-  -H 'Content-Type: application/json' \
-  -d '{"mode":"scheduled","tickers":["TEVA.TA","AAPL"]}'
-```
+### 7. Ask the team in chat
 
-Confirm the returned `watchlist` holds only the in-session market's tickers, and that for the
-Saturday case the response is `skipped:true` with the `runs` count in `quant_service/store.duckdb`
-unchanged. The same call with `"mode":"manual"` must return both tickers regardless of the clock.
+Open <http://localhost:8001> and ask *"what do you think about Teva?"*. The assistant resolves the
+name to `TEVA.TA`, runs the same pipeline for that ticker, and reports the Risk Manager's call,
+conviction, rationale, and the PDF path. Follow-ups resolve from memory — *"and Nvidia?"* analyzes
+`NVDA` (US names take the bare symbol; TA-35 names take `.TA`). Ask for a price target and it
+declines rather than inventing one.
+
+Three one-time wiring steps after importing `chat_assistant.workflow.json` (details in
+[`n8n/README_credentials.md`](n8n/README_credentials.md)): put its id in
+`config/universe.yaml → n8n_workflow_ids.chat`; point its `run_investment_analysis` tool node at
+your imported orchestrator; and copy the **Chat Trigger** node's Production URL into
+`N8N_CHAT_WEBHOOK_URL`. The orchestrator must also be **Published/Active** — n8n won't execute an
+inactive workflow.
 
 ---
 
@@ -271,302 +221,113 @@ unchanged. The same call with `"mode":"manual"` must return both tickers regardl
 
 | Command | What it does |
 |---|---|
-| `npm run dev` | Quant service + n8n, wired. Ctrl-C stops both. |
+| `npm run dev` | Quant service + chat front end + n8n, wired. Ctrl-C stops all. |
 | `npm run doctor` | Preflight — Node, venv, `.env`, keys, DuckDB, ports. Starts nothing. |
 | `npm run smoke` | Endpoint check against the running service. |
 | `npm run ingest` | Pull the watchlist's OHLC into the `prices` cache (keyless — Yahoo Finance). |
 | `npm run costs` | Per-run LLM cost summary. |
-| `npm run eval` | Evaluation harness (§9) — scores the Sentiment, Earnings and §6.5 chat-router agents against `eval/*_labeled.jsonl` and prints a one-page summary. `npm run eval -- --no-llm` runs the FinBERT/HeBERT arm only. |
+| `npm run eval` | Evaluation harness ([below](#evaluation-results)) against `eval/*_labeled.jsonl`. `npm run eval -- --no-llm` runs the FinBERT/HeBERT arm only (free). |
 | `npm run db:init` | Create/repair the DuckDB schema. |
-| `npm run dev:service` / `npm run dev:n8n` / `npm run dev:frontend` | Just one process, for debugging. |
-| `npm run dev -- --reload` | Service with uvicorn auto-reload. |
+| `npm run dev:service` / `dev:n8n` / `dev:frontend` | Just one process, for debugging. |
 
-`npm run ingest` accepts the underlying flags: `npm run ingest -- --symbols TEVA.TA`,
-`npm run ingest -- --lookback-days 90`. Ingestion is also **lazy** — `/ohlc` and `/indicators`
-fetch any symbol they don't have cached, so this is a pre-warm, not a prerequisite.
+`npm run ingest` accepts `-- --symbols TEVA.TA` and `-- --lookback-days 90`. Ingestion is also
+**lazy** — `/ohlc` and `/indicators` fetch any symbol they don't have cached — so it's a pre-warm,
+not a prerequisite.
 
 ---
 
 ## Configuration
 
 **Defaults live in config, never in code or workflows.** Watchlist, news/earnings windows,
-lookback, cron, report dir and the n8n workflow ids are in `config/universe.yaml`; Risk
-Manager decision thresholds are in `config/rubric.yaml` (§4.4). Edit those.
+lookback, cron, report directory, per-market calendars, and the n8n workflow ids are in
+`config/universe.yaml`; Risk Manager decision thresholds are in `config/rubric.yaml`. Edit those.
 
-**Secrets live in `.env`** (gitignored; only `.env.example` is committed). `npm run dev` loads
-it into both processes.
+**Secrets live in `.env`** (gitignored; only `.env.example` is committed). `npm run dev` loads it
+into both processes.
 
 | Variable | Default | Notes |
 |---|---|---|
 | `OPENROUTER_API_KEY` | — | <https://openrouter.ai> → **Keys**. |
-| `NEWSAPI_API_KEY` | — | <https://newsapi.org/register> → free tier (100 req/day). Optional. |
+| `NEWSAPI_API_KEY` | — | <https://newsapi.org/register> → free tier. Optional. |
 | `N8N_API_KEY` | — | n8n → *Settings → n8n API*. The only place n8n exposes LLM token usage. |
-| `EDGAR_USER_AGENT` | — | Any name + contact email, per [SEC fair-access policy](https://www.sec.gov/os/webmaster-faq#developers). Needed only for US tickers. |
-| `QUANT_SERVICE_URL` | `http://127.0.0.1:8000` | Single source for where the service lives: n8n uses it, and the runner derives uvicorn's port from it. Use `http://host.docker.internal:8000` if n8n runs in Docker. |
-| `N8N_API_URL` | `http://localhost:5678` | Where the quant service reaches n8n's REST API. |
-| `N8N_CHAT_WEBHOOK_URL` | — | §6.5 chat front end → n8n. The Chat Trigger node's **Production URL** (ends in `/chat`). Unset, the page says so rather than answering. |
-| `FRONTEND_PORT` | `8001` | Port for the chat front end. |
-| `DUCKDB_PATH` | `quant_service/store.duckdb` | Repo-root-relative; the runner absolutises it. |
+| `EDGAR_USER_AGENT` | — | Name + contact email, per SEC fair-access policy. Needed only for US tickers. |
+| `QUANT_SERVICE_URL` | `http://127.0.0.1:8000` | Where n8n reaches the service; the runner derives uvicorn's port from it. Use `http://host.docker.internal:8000` if n8n runs in Docker. |
+| `N8N_CHAT_WEBHOOK_URL` | — | Chat front end → n8n. The Chat Trigger node's Production URL (ends in `/chat`). |
+| `DUCKDB_PATH` | `quant_service/store.duckdb` | Repo-root-relative; the runner absolutizes it. |
 | `HF_HOME` | `.hf_cache` | Hugging Face cache (FinBERT/HeBERT weights). |
 | `REPORT_DIR` | `reports` | Generated PDFs. |
-| `TZ` | `Asia/Jerusalem` | Store UTC, render local. |
-| `N8N_PORT` | `5678` | Only if 5678 is taken. |
-| `ALPHAVANTAGE_API_KEY` | — | **Leave blank.** Listed in the design as the OHLC backup, but verified to have no TASE (`*.TA`) coverage. Yahoo Finance is the only working source. |
+| `TZ` / `GENERIC_TIMEZONE` | `Asia/Jerusalem` | Store UTC, render local. n8n evaluates cron in `GENERIC_TIMEZONE` — leave it set or the schedule fires at the wrong hours. |
 
 ---
 
-## Repository structure
+## Design highlights
 
-```
-algotrade-project/
-├── quant_service/              # FastAPI service — all ML, indicators, PDF (§5)
-│   ├── app.py                  #   entrypoint: uvicorn app:app --port 8000
-│   ├── routers/                #   one module per endpoint
-│   ├── data/                   #   markets, yahoo, newsapi, rss, maya, stores, cleaning, cache
-│   ├── indicators/             #   pandas-ta computation behind /indicators
-│   ├── nlp/                    #   finbert, hebert, language_detect
-│   ├── pdf/                    #   render (WeasyPrint), charts (matplotlib)
-│   ├── schemas/                #   Pydantic models — validated at every LLM boundary
-│   ├── ops/                    #   cost logging + reporting (§9.4)
-│   ├── store_init.py           #   DuckDB schema
-│   ├── smoke_test.py           #   endpoint check
-│   └── requirements.txt
-├── n8n/                        # workflows (§6) + README_credentials.md
-│   ├── orchestrator.workflow.json
-│   ├── chat_assistant.workflow.json   # §6.5 Chat Trigger → AI Agent (router only)
-│   └── agents/                 #   sentiment, earnings, technical, risk_manager
-├── frontend/                   # §6.5 chat UI — separate service on :8001
-│   ├── app.py                  #   GET / (page) + POST /api/chat (proxy to the n8n webhook)
-│   └── static/                 #   index.html, app.js, style.css — no build step
-├── prompts/                    # version-controlled prompts & few-shot examples (§7)
-├── eval/                       # evaluation harness (§9)
-├── config/                     # universe.yaml (defaults) + rubric.yaml (thresholds)
-├── scripts/                    # the npm dev scripts (Node stdlib only, no dependencies)
-├── docs/                       # design.md — the source of truth
-├── package.json
-├── .env.example
-└── CLAUDE.md                   # build instructions & guardrails
-```
+Four AI techniques go beyond baseline LLM calls. This is where the interesting engineering lives —
+each is deliberate, visible in the report, and measured by the [evaluation harness](#evaluation-results).
 
----
-
-## Build roadmap
-
-Built and reviewed **one step at a time** (detail in `CLAUDE.md`).
-
-| Step | What | Status |
+| Technique | Where | What it adds |
 |---|---|---|
-| 0 | Scaffold: repo layout, FastAPI stubs, DuckDB schema, config | ✅ done |
-| 1 | Data ingestion: Yahoo OHLC + cleaning → `prices` | ✅ done |
-| 2 | `/ohlc` + `/indicators` real (`pandas-ta`) | ✅ done |
-| 3 | Technical Agent sub-workflow + `/validate` endpoint | ✅ done |
-| 4 | `/sentiment` real (FinBERT + HeBERT) | ✅ done |
-| 5 | Sentiment Agent sub-workflow (dual scoring, few-shot, `news` table) | ✅ done |
-| 6 | Earnings Agent (Maya scraping + self-consistency number extraction) | ✅ done |
-| 7 | Risk Manager three-stage critique loop | ✅ done |
-| 8 | Orchestrator fan-out + cost logging | ✅ done |
-| 9 | `/report` real (WeasyPrint + Jinja2) | ✅ done |
-| 10 | Schedule trigger gated by market hours | ✅ done |
-| 11 | Evaluation harness (`python -m eval.run`) | ✅ done |
-| 12 | Chat assistant front end (bonus, §6.5) | ✅ done |
-| 13 | S&P 500 market abstraction (config + calendar + news/schedule gate) | ✅ done |
-| 14 | SEC EDGAR earnings source + report currency | ✅ done |
-| 15 | README + supporting docs for a grader | ⬜ |
+| **Fine-tuned domain transformers** (FinBERT EN, HeBERT HE) | `/sentiment` endpoint, Sentiment Agent | An independent sentiment signal alongside the LLM; their disagreement becomes a first-class, reported feature. |
+| **Few-shot prompting from labeled JSONL** | Sentiment + Earnings agents | Prompt engineering that is version-controlled (`prompts/`) and evaluable, not buried in a node. |
+| **Self-consistency sampling** (n=3, temperature 0.3) | Earnings number extraction | Enforces "do not invent numbers" *by construction*: a figure commits only when ≥2 of 3 samples agree; otherwise it is `ambiguous`. |
+| **Multi-pass critique loop** (draft → devil's advocate → final) | Risk Manager | The recommendation visibly audits its own reasoning, which curbs overconfident calls. |
 
-Step 15 (README) is intentionally last: it is the grader-facing README and demo docs, so it is
-written once, at the end, with the chat assistant (Step 12) and S&P 500 support (Steps 13–14)
-already in place.
+**Model assignments** (all via OpenRouter — a one-field swap to change any of them):
 
-**S&P 500 support (Steps 13–14):** mixed TA-35 + S&P watchlist, SEC EDGAR earnings, per-market
-schedule gate. Full plan: [`docs/sp500_integration_plan.md`](docs/sp500_integration_plan.md).
+| Agent | Model | Price / 1M tokens | Why |
+|---|---|---|---|
+| Sentiment | `anthropic/claude-haiku-4.5` | $1 in / $5 out | Multi-headline reading, translation, few-shot scoring. |
+| Earnings | `x-ai/grok-4.3` | $1.25 in / $2.50 out | Careful extraction with self-consistency (chosen on quality, not price). |
+| Technical | `google/gemini-2.5-flash-lite` | $0.10 in / $0.40 out | Narrates a pre-computed JSON — no reasoning required. |
+| Risk Manager (×3 passes) | `anthropic/claude-haiku-4.5` | $1 in / $5 out | Cross-agent synthesis, critique, and final justification. |
 
-Step 13 landed the **market abstraction**: every ticker resolves to a market (`tase` | `us`) from
-its Yahoo suffix (`*.TA` → `tase`, bare → `us`), and `config/universe.yaml`'s `markets:` block makes
-the trading calendar, trading hours, news feeds, earnings source and currency per-market instead of
-globally Israeli. A mixed watchlist like `["TEVA.TA","AAPL"]` is one list, not two code paths — US
-symbols reindex onto a Mon–Fri session grid (Fridays kept, no manufactured Sunday bars), pull the
-`en_us` RSS group, and gate on NYSE hours.
+Every LLM call is logged to the `costs` table (`run_id, agent, model, tokens, usd_cost, latency`).
+A five-ticker run costs roughly **$0.04–$0.08** — the critique loop triples the Risk Manager's call
+count. Every LLM-to-agent boundary is validated by a **Pydantic schema**; a malformed response
+triggers one stricter-instruction retry, then a `degraded` result — never a silent bad value.
 
-Step 14 completed it with the **US earnings source**: `/earnings/fetch` routes on the market's
-`earnings_source` — Maya for `tase`, **SEC EDGAR** for `us` (`quant_service/data/edgar.py`: ticker →
-CIK → recent 8-K/10-Q/10-K → the EX-99.* press-release exhibit as the verbatim excerpt, plain
-`httpx`, no Playwright). The response shape is identical for both sources, so the Earnings Agent
-sub-workflow is market-agnostic and needed no changes. EDGAR requires a declared contact address —
-set `EDGAR_USER_AGENT` in `.env` (`npm run doctor` flags it) or US tickers degrade rather than
-fabricate. The PDF now prints each ticker's **market and currency** and groups the executive
-summary by market when the watchlist spans more than one, so an ILS figure is never read as USD.
-
-A follow-up to Step 14 closed the last TA-35 assumption in the chat path: the assistant's system
-prompt now states both ticker conventions with worked examples (`"Nvidia"` → `NVDA`,
-`"Teva"` → `TEVA.TA`), and `/news/fetch` derives a search term from the SEC registrant name for any
-US ticker missing from `search_terms`. Without that, every S&P 500 name except `AAPL` came back
-news-blind and conviction-capped.
-
-Two follow-on fixes came out of testing it on Google. NewsAPI searches the whole web, so US brand
-names pull in whatever else shares them — unrestricted, `"NVIDIA"` returned PyPI package listings and
-`"Google"` returned a Go-language tutorial. The fix is a **publisher allowlist** per market
-(`markets.us.newsapi_domains`), which lifted those queries to 28 and 33 items, all equity coverage;
-`tase` declares none, so Israeli coverage is untouched. And the derived name is *wrong*, not just
-thin, when a company is reported under a different name than it registers under: `GOOGL` registers as
-"Alphabet Inc." and returned zero articles. Those are hand-tuned — `GOOGL: ["Alphabet", "Google"]` —
-and hand-tuned always beats derived.
+See the [reasoning trace in `docs/results.md`](docs/results.md) for a worked example of the critique
+loop downgrading a call's conviction, and [`docs/design.md`](docs/design.md) for the full design.
 
 ---
 
-## Contributing
+## Evaluation results
 
-- **`docs/design.md` is the source of truth.** If code and the doc conflict, the doc wins.
-  Changing a contract/schema/table means updating the doc first.
-- **One step per change**, with a runnable way to verify it (see `CLAUDE.md` guardrails).
-- **No ML in n8n** — indicators, transformers, and PDF rendering live only in the quant
-  service, reached over HTTP.
-- **Keep secrets out of git** — only `.env.example` is committed.
-- **Store UTC, render Asia/Jerusalem.** DuckDB's `TIMESTAMP` is timezone-*naive*: binding an
-  aware datetime makes it convert to local time and drop the offset. Writers must normalize to
-  naive UTC first (`data/run_store.py: _db_utc()`).
+The harness scores each agent against hand-labeled fixtures (`eval/*_labeled.jsonl`) and prints a
+one-page summary. Reproduce with `npm run eval` (needs the service running and an OpenRouter key;
+`-- --no-llm` runs the free transformer arm only).
+
+```
+Evaluation summary  (eval-20260723-084633)
+Sentiment: 30 items (20 EN, 10 HE)   Earnings: 10 disclosures   Chat: 7 router cases
+
+Agent                       Dataset             Metrics
+------------------------------------------------------------------------------
+Sentiment (LLM)             sentiment_labeled   accuracy 0.90 (27/30) | MAE 0.12  [haiku]
+Sentiment (FinBERT/HeBERT)  sentiment_labeled   accuracy 0.63 (19/30) | MAE 0.41
+Sentiment (agreement)       sentiment_labeled   Pearson r 0.70 (n=30)
+Earnings (classifier)       earnings_labeled    macro-F1(kind) 1.00 | materiality acc 0.90 (n=10)  [grok]
+Earnings (extractor)        earnings_labeled    precision 1.00 | recall 1.00 | ambiguous-when-absent 22/22  [grok]
+Chat router (§6.5)          chat_refusal        refusal 4/5 | routing 2/2 | no fabrication | failed: refuse-comparison  [haiku]
+------------------------------------------------------------------------------
+LLM cost (this run): $0.1166   (chat 11,872 tok, earnings 48,338 tok, sentiment 5,332 tok)
+```
+
+Reading the numbers: FinBERT (English) is the stronger transformer arm, as expected — **HeBERT is a
+general Hebrew sentiment model, not finance-tuned**, and the gap is real rather than hidden. The
+earnings extractor is scored on whether it commits a figure *only* when the source states it and
+marks everything else `ambiguous` — i.e. the "never invent numbers" guarantee, measured.
 
 ---
 
-## Troubleshooting
+## Further reading
 
-- **First `/sentiment` call is slow.** It downloads FinBERT + HeBERT into `HF_HOME` (~1.7 GB on
-  disk) and loads them into memory — tens of seconds. Later calls reuse the in-process
-  pipeline. If it degrades with a *download* error even though the weights are cached (a
-  TLS-intercepting network breaks the hub check), add `HF_HUB_OFFLINE=1` to `.env`.
-- **Maya (earnings) scraping fails sometimes.** Expected, and honest: Maya sits behind bot
-  protection, so `/earnings/fetch` may return a `degraded:` summary. The agent then reports "no
-  recent disclosure" rather than guessing — it never fabricates figures.
-- **Earnings figures all show `ambiguous`?** If you pulled an older checkout, re-run
-  `npm run setup` (or `pip install -r quant_service/requirements.txt`): figure extraction needs
-  the new `pypdf` dependency. Without it `/earnings/fetch` still works but falls back to the
-  report page, which carries no figures — so every field correctly votes `ambiguous`. Note that
-  `ambiguous` is also the *right* answer for a disclosure that genuinely states no figures (a
-  meeting notice, a rating affirmation).
-- **PowerShell `curl` is not curl** — it's an alias for `Invoke-WebRequest`, which rejects
-  `-X`/`-H`/`-d` and yields a confusing **422**. Use `npm run smoke`, `Invoke-RestMethod`, or
-  `curl.exe`.
-- **"File is being used by another process."** DuckDB is single-writer — close the DuckDB CLI
-  or any open connection before ingesting.
-- **Everything comes back `degraded` and the Risk Manager says `avoid`.** Almost always the
-  wrong Python: Playwright and the TLS truststore live in `quant_service/.venv`. `npm run dev`
-  uses it; a hand-started uvicorn on system Python does not. (The `avoid` is *correct* — 2+
-  degraded agents force it, §3.4.)
-- **Chat says "the workflow is not active".** The chat agent reaches the orchestrator through an
-  *Execute Workflow Trigger*, and n8n refuses to execute an inactive workflow. Publish/activate
-  **Orchestrator (§6.1)**, not just the chat workflow.
-- **Chat answers "would you like me to run it?" instead of running.** The live workflow is
-  carrying a stale system prompt. `prompts/chat_assistant_system.md` is the source of truth;
-  run `python scripts/sync_chat_prompt.py` to copy it into
-  `n8n/chat_assistant.workflow.json`, then re-import. `npm run eval` flags this as
-  *"WARNING prompt drift"* on the `chat_refusal` row.
-- **No `chat` row in `costs` for a chat run.** Expected on the first harvest: `/costs/harvest`
-  runs *inside* the orchestrator while the parent chat execution is still in flight, so n8n has
-  not finalised its token usage yet. Re-run the harvest after the reply lands and the row
-  appears — `curl -X POST $QUANT_SERVICE_URL/costs/harvest -d '{"run_id":"<id>"}'`.
-- **`npm run doctor`** checks most of the above (venv, keys, DuckDB, ports) without starting
-  anything.
-
-<details>
-<summary><b>What the runner wires up</b> — read this before starting the service or n8n by hand</summary>
-
-Each of these is a real footgun that produces a *plausible but wrong* run. `npm run dev`
-handles all of them; if you start things manually, you own them:
-
-- **`.env` reaches the service.** The Python code never reads `.env` (only n8n does), so
-  `NEWSAPI_API_KEY` / `N8N_API_KEY` must be exported in the shell that runs uvicorn.
-- **`DUCKDB_PATH`, `HF_HOME`, `REPORT_DIR` are repo-root-relative**, but uvicorn must run with
-  cwd `quant_service/` (its imports are flat). Exporting `DUCKDB_PATH` there resolves it to
-  `quant_service/quant_service/store.duckdb` — a second, empty DB. Leave the variable **unset**
-  and the service falls back to the correct absolute default.
-- **n8n needs `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`**, or every `{{ $env.QUANT_SERVICE_URL }}`
-  in the workflows fails with *"access to env vars denied"*. The gate is literally
-  `!== 'false'`, so *unset* means blocked.
-- **n8n must reach the service at `127.0.0.1`, never `localhost`** — Node resolves `localhost`
-  to IPv6 first while uvicorn binds IPv4, giving `ECONNREFUSED ::1:8000`.
-
-Manual equivalent:
-
-```bash
-cd quant_service
-python -m venv .venv                    # then activate it
-pip install -r requirements.txt
-python -m playwright install chromium
-python store_init.py
-```
-
-```powershell
-# terminal 1 — from quant_service/, with DUCKDB_PATH left unset:
-$env:NEWSAPI_API_KEY = "<key>"          # optional
-$env:N8N_API_KEY     = "<key>"
-python -m uvicorn app:app --port 8000
-
-# terminal 2:
-$env:N8N_BLOCK_ENV_ACCESS_IN_NODE = "false"
-$env:QUANT_SERVICE_URL            = "http://127.0.0.1:8000"
-npx n8n
-```
-
-If an n8n is already running on 5678, `npm run dev` leaves it alone and reuses it — but *that*
-instance must have been started with the two variables above.
-
-</details>
-
-<details>
-<summary><b>Implementation notes</b> — handled in code; no action needed</summary>
-
-- **Corporate TLS proxy.** `yfinance` can fail certificate verification behind a TLS-inspecting
-  proxy, and misreports it as *"Too Many Requests"* (it is **not** a rate limit).
-  `data/yahoo.py: configure_tls()` builds a `certifi` + Windows-root CA bundle;
-  `nlp/finbert.py: _configure_hf_tls()` reuses it for the Hugging Face download (which uses
-  `httpx` and ignores `SSL_CERT_FILE`). On non-Windows behind such a proxy, point
-  `CURL_CA_BUNDLE` at your corporate CA bundle.
-- **`pandas-ta` on numpy 2.x.** Older builds do `from numpy import NaN`, removed in numpy 2.0.
-  `indicators/calc.py` restores the alias with a non-destructive shim before the import — no
-  numpy downgrade needed.
-- **DuckDB CLI version.** The CLI can only open `store.duckdb` if its version matches the
-  Python `duckdb` that wrote it (`python -c "import duckdb; print(duckdb.__version__)"`).
-- **Maya scrape is TTL-cached** for 10 minutes, so an orchestrator run scrapes once, not once
-  per ticker.
-- **The Earnings agent classifies the top 3 disclosures, not the newest one.** A ticker's newest
-  filing is almost always administrative — a Form 4, an "Opening of Trading" notice — while the
-  results sit far below (Teva's Q1 8-K was 31 rows down; Elbit's newest was a *"we will report on
-  Aug 5"* notice with the actual Q1 results 7 rows below). `/earnings/fetch` ranks disclosures by
-  title and excerpts the top `earnings_candidates` (`config/universe.yaml`, default 3); the agent
-  classifies each and reports the most material. Ranking is *retrieval, not classification* — the
-  score never becomes `kind`/`materiality`, so a mis-ranked candidate is just classified `other/low`
-  and loses. Figures are extracted from the winner only: 3 classify + 3 extract calls per ticker.
-  Because candidates need not clear the Pydantic boundary on the same attempt — one may validate
-  first time while a sibling needs the stricter retry — the three classification outcomes are
-  reunited by a `Merge Classifications` node (append, 3 inputs) *before* selection runs. Without it,
-  selection runs once per branch over a partial set and the sub-workflow returns one result per
-  branch, the first of which may be the loser. This is invisible with a model that always validates
-  first time, which is how it survived until the `x-ai/grok-4.3` swap surfaced it.
-- **Earnings figures come from the disclosure's PDF, not its report page.** Maya publishes a
-  disclosure in three layers and only the last has numbers: the report page is an SPA shell
-  (its visible text is navigation, the report list, and a live stock quote); its iframe holds a
-  ~1 KB cover sheet naming an attachment; the attachment — `mayafiles.tase.co.il/rpdf/…` — is
-  the press release carrying revenue, EPS and guidance. `data/maya.py: _pdf_excerpt()` fetches
-  that PDF and extracts text (`pypdf`). Because a results PDF opens with several pages of
-  SEC/MAGNA boilerplate, the excerpt is *anchored* on the first page holding real currency
-  figures rather than the document's start. Unreachable or scanned PDFs (no text layer) degrade
-  to the cover sheet, and figures come out `ambiguous` — never invented.
-- **US filings use the same three-layer logic against EDGAR.** `data/edgar.py` resolves the
-  ticker to a CIK, lists recent 8-K/10-Q/10-K filings, and excerpts the **EX-99.\* press-release
-  exhibit** — because an 8-K's own document is a cover note ("a press release is attached as
-  Exhibit 99.1") carrying no figure at all, exactly like Maya's cover sheet. A 10-Q/10-K has no
-  such exhibit, so it falls back to its primary document, which *is* the financial statement; an
-  8-K without a press release gets no excerpt and its figures come out `ambiguous`. That is
-  deliberate: reading an 8-K's iXBRL cover page instead returns runs of `true true NASDAQ
-  0000320193`, which costs LLM budget and teaches the model nothing. The excerpt is anchored on
-  the first cluster of currency figures, sharing `maya.MONEY_RE` — one definition of "where do the
-  figures start", whichever market the document came from. No Playwright: EDGAR is a documented
-  JSON API, so plain `httpx` plus the SEC-required `EDGAR_USER_AGENT` suffices.
-- **`WeasyPrint` on Windows (Step 9) needs the GTK3 runtime.** `pip install weasyprint`
-  provides the Python package but not its native libraries, so the first render (or
-  `import weasyprint`) fails with `cannot load library 'libgobject-2.0-0.dll'`. Install the
-  **GTK3 runtime** once — the [tschoonj GTK-for-Windows installer](https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer/releases)
-  (`gtk3-runtime-*-win64.exe`), keeping the "add to PATH" option — then restart the shell.
-  `/report` itself never crashes without it: it degrades to `{pdf_path: null, summary:
-  "degraded: …"}` and the run is marked `error`.
-
-</details>
+- **[`docs/design.md`](docs/design.md)** — the full technical design: architecture, endpoint
+  contracts, agent schemas, DuckDB tables, and parameters. The source of truth.
+- **[`docs/results.md`](docs/results.md)** — a walk-through of real runs end-to-end, with the
+  reasoning trace and persisted data, plus the evaluation results.
+- **[`docs/demo_script.md`](docs/demo_script.md)** — a 5-minute demo outline.
+- **[`docs/sp500_integration_plan.md`](docs/sp500_integration_plan.md)** — how the mixed
+  TA-35 + S&P 500 market abstraction was added.
+- **[`n8n/README_credentials.md`](n8n/README_credentials.md)** — the detailed n8n import and
+  credential-wiring walkthrough.
