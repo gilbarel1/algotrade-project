@@ -3,38 +3,314 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Investment Team — Chat</title>
+    <title>Stocker — Autonomous Multi-Agent Research Desk</title>
+    <meta
+      name="description"
+      content="Stocker: an autonomous multi-agent investment desk. Technical, sentiment and earnings agents feed a three-pass Risk Manager that produces an evidence-linked recommendation report. Analyze. Evaluate. Invest wisely."
+    />
+    <link rel="icon" type="image/png" href="/static/favicon.png" />
+    <link
+      rel="preload"
+      href="/static/fonts/clash-display-500.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/static/fonts/satoshi-400.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
-    <header>
-      <h1>Investment Team</h1>
-      <p class="sub">
-        Ask about a TA-35 name and the full pipeline runs: sentiment, earnings and
-        technical agents, then the Risk Manager's three-pass critique loop. Answers
-        come from the pipeline only — the assistant is a router, not an analyst.
-      </p>
-    </header>
+    <!-- Finance-domain background animation (drawn in app.js). Purely decorative. -->
+    <canvas id="bg" aria-hidden="true"></canvas>
+    <div class="scrim" aria-hidden="true"></div>
 
-    <main id="log" aria-live="polite">
-      <div class="msg bot">
-        <div class="bubble">
-          Ask me about a TA-35 ticker — for example <em>"what do you think about
-          Teva?"</em>. A single name takes about a minute to analyse.
+    <!-- Sticky nav -->
+    <nav class="nav">
+      <div class="nav-inner">
+        <a class="brand" href="#top">
+          <img class="brand-mark" src="/static/stocker-icon.png" alt="Stocker" />
+          Stocker
+        </a>
+        <div class="nav-links">
+          <a href="#agents">Agents</a>
+          <a href="#how">How it works</a>
+          <a href="#report">The report</a>
+          <a href="#chat">Chat</a>
         </div>
+        <a class="btn btn-pill" href="#chat">Try the chat</a>
       </div>
+    </nav>
+
+    <main id="top">
+      <!-- HERO -->
+      <section class="hero" id="hero">
+        <div class="hero-inner reveal">
+          <div class="hero-left">
+            <div class="hero-brand">
+              <img
+                class="hero-mark"
+                src="/static/stocker-icon.png"
+                alt="Stocker logo"
+              />
+              <div class="eyebrow">STOCKER · TA-35 &amp; S&amp;P 500</div>
+            </div>
+            <h1>
+              An autonomous<br />
+              investment research<br />
+              desk.
+            </h1>
+            <p class="tagline">ANALYZE · EVALUATE · INVEST WISELY</p>
+          </div>
+          <div class="hero-right">
+            <p class="lede">
+              A team of specialist AI agents debates every name on the watchlist,
+              then a Risk Manager tears the thesis apart before signing off — and
+              writes it all into one evidence-linked recommendation report.
+            </p>
+            <div class="hero-cta">
+              <a class="btn btn-ghost" href="#how">See how it works</a>
+              <a class="btn btn-solid" href="#chat">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <path
+                    fill="currentColor"
+                    d="M12 4a1 1 0 0 0-1 1v6H5a1 1 0 1 0 0 2h6v6a1 1 0 1 0 2 0v-6h6a1 1 0 1 0 0-2h-6V5a1 1 0 0 0-1-1Z"
+                  />
+                </svg>
+                Ask the team
+              </a>
+            </div>
+          </div>
+        </div>
+        <a class="scroll-hint" href="#agents" aria-label="Scroll to learn more">
+          <span></span>
+        </a>
+      </section>
+
+      <!-- STAT STRIP -->
+      <section class="stats reveal">
+        <div class="stat"><b>4</b><span>specialist agents</span></div>
+        <div class="stat"><b>3</b><span>Risk Manager passes</span></div>
+        <div class="stat"><b>2</b><span>languages · EN &amp; HE</span></div>
+        <div class="stat"><b>2</b><span>markets · TASE &amp; US</span></div>
+      </section>
+
+      <!-- AGENTS -->
+      <section class="section" id="agents">
+        <div class="section-head reveal">
+          <h2>Meet the team</h2>
+          <p>
+            Four specialists, each with a single job and its own guardrails. No
+            agent sees more than it needs; heavy data never touches the language
+            model.
+          </p>
+        </div>
+        <div class="grid grid-4">
+          <article class="card reveal">
+            <div class="card-icon">📈</div>
+            <h3>Technical Agent</h3>
+            <p>
+              Reads adjusted OHLC and a suite of indicators computed server-side,
+              then narrates the setup — trend, momentum and volatility — in plain
+              language.
+            </p>
+          </article>
+          <article class="card reveal">
+            <div class="card-icon">📰</div>
+            <h3>Sentiment Agent</h3>
+            <p>
+              Scores the news in two ways at once — an LLM read and a finance model
+              (FinBERT for English, HeBERT for Hebrew). Where they disagree is a
+              signal, not noise.
+            </p>
+          </article>
+          <article class="card reveal">
+            <div class="card-icon">🧾</div>
+            <h3>Earnings Agent</h3>
+            <p>
+              Pulls disclosures from Maya (TASE) and SEC EDGAR (US). Reports a figure
+              only when it appears verbatim — self-consistency voting marks anything
+              unclear <em>ambiguous</em> rather than inventing it.
+            </p>
+          </article>
+          <article class="card reveal">
+            <div class="card-icon">🛡️</div>
+            <h3>Risk Manager</h3>
+            <p>
+              Three passes, always: a draft call, a devil's-advocate critique that
+              attacks it, then a final decision that answers the critique. Conviction
+              is capped when the signals conflict.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <!-- HOW IT WORKS -->
+      <section class="section" id="how">
+        <div class="section-head reveal">
+          <h2>How a call gets made</h2>
+          <p>
+            One watchlist in, one recommendation report out — with every step of the
+            reasoning kept on the page.
+          </p>
+        </div>
+        <ol class="flow">
+          <li class="reveal">
+            <span class="flow-n">1</span>
+            <div>
+              <h3>Fan out</h3>
+              <p>
+                The orchestrator runs the watchlist in parallel — the technical,
+                sentiment and earnings agents work each ticker at once.
+              </p>
+            </div>
+          </li>
+          <li class="reveal">
+            <span class="flow-n">2</span>
+            <div>
+              <h3>Gather the evidence</h3>
+              <p>
+                Prices, dual-scored news and verbatim earnings figures are collected
+                per name — short text and scores only; the raw data stays in the
+                store.
+              </p>
+            </div>
+          </li>
+          <li class="reveal">
+            <span class="flow-n">3</span>
+            <div>
+              <h3>Critique the thesis</h3>
+              <p>
+                The Risk Manager drafts a call, argues against it, then commits — so
+                the weak points are on the record, not buried.
+              </p>
+            </div>
+          </li>
+          <li class="reveal">
+            <span class="flow-n">4</span>
+            <div>
+              <h3>Write the report</h3>
+              <p>
+                A PDF lands with a per-ticker page, the dual-sentiment panel, the full
+                reasoning trace and citations back to every source.
+              </p>
+            </div>
+          </li>
+        </ol>
+
+        <div class="grid grid-3 features">
+          <div class="feature reveal">
+            <h4>Never invents numbers</h4>
+            <p>Figures are committed only when they appear verbatim in the filing.</p>
+          </div>
+          <div class="feature reveal">
+            <h4>Dual-language sentiment</h4>
+            <p>English and Hebrew news, each scored by the right finance model.</p>
+          </div>
+          <div class="feature reveal">
+            <h4>Adversarial risk review</h4>
+            <p>Every call survives a devil's-advocate pass before it ships.</p>
+          </div>
+          <div class="feature reveal">
+            <h4>Cost-logged</h4>
+            <p>Every model call records its tokens, latency and cost.</p>
+          </div>
+          <div class="feature reveal">
+            <h4>Scheduled or on-demand</h4>
+            <p>Runs on the market clock, or the moment you ask in chat.</p>
+          </div>
+          <div class="feature reveal">
+            <h4>Traceable</h4>
+            <p>Translations are flagged; every claim links back to its source.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- REPORT PREVIEW -->
+      <section class="section" id="report">
+        <div class="section-head reveal">
+          <h2>See a real report</h2>
+          <p>
+            Pages rendered from an actual run — the executive summary, a per-ticker
+            page and the Risk Manager's three-pass reasoning trace.
+          </p>
+        </div>
+        <div class="shots">
+          <figure class="shot reveal">
+            <img
+              src="/static/screenshots/report_exec_summary.png"
+              alt="Report executive summary: run header and highest-conviction calls"
+              loading="lazy"
+            />
+            <figcaption>Executive summary</figcaption>
+          </figure>
+          <figure class="shot reveal">
+            <img
+              src="/static/screenshots/report_ticker_page.png"
+              alt="Per-ticker page: dual-sentiment panel, earnings figures and technical snapshot"
+              loading="lazy"
+            />
+            <figcaption>Per-ticker page · dual sentiment</figcaption>
+          </figure>
+          <figure class="shot reveal">
+            <img
+              src="/static/screenshots/report_reasoning_trace.png"
+              alt="Reasoning trace: draft, devil's-advocate critique and final decision"
+              loading="lazy"
+            />
+            <figcaption>Reasoning trace · draft → critique → final</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <!-- CHAT -->
+      <section class="section chat-section" id="chat">
+        <div class="section-head reveal">
+          <h2>Ask the team</h2>
+          <p>
+            Name a ticker and the whole pipeline runs for it — sentiment, earnings and
+            technical agents, then the Risk Manager's three-pass loop. Answers come
+            from the pipeline only; the assistant is a router, not an analyst.
+          </p>
+        </div>
+
+        <div class="chat-shell reveal">
+          <div class="chat-log" id="log" aria-live="polite">
+            <div class="msg bot">
+              <div class="bubble">
+                Ask me about a ticker — for example <em>"what do you think about
+                Teva?"</em> or <em>"and Netflix?"</em>. A single name takes about a
+                minute to analyse.
+              </div>
+            </div>
+          </div>
+
+          <form class="chat-composer" id="composer" autocomplete="off">
+            <input
+              id="input"
+              type="text"
+              placeholder="what do you think about Teva?"
+              aria-label="Message"
+              required
+            />
+            <button id="send" type="submit">Send</button>
+          </form>
+        </div>
+      </section>
     </main>
 
-    <form id="composer" autocomplete="off">
-      <input
-        id="input"
-        type="text"
-        placeholder="what do you think about Teva?"
-        aria-label="Message"
-        required
-      />
-      <button id="send" type="submit">Send</button>
-    </form>
+    <footer class="foot">
+      <p>
+        <strong>Stocker</strong> — educational research tooling, not investment
+        advice. TA-35 &amp; S&amp;P 500 watchlist · multi-agent pipeline · times shown
+        Asia/Jerusalem.
+      </p>
+    </footer>
 
     <script src="/static/app.js"></script>
   </body>

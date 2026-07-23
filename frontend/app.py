@@ -38,7 +38,7 @@ CHAT_WEBHOOK_URL = os.environ.get("N8N_CHAT_WEBHOOK_URL", "").strip()
 # question, so the ceiling here is generous on read and tight on connect.
 _TIMEOUT = httpx.Timeout(connect=5.0, read=300.0, write=30.0, pool=300.0)
 
-app = FastAPI(title="Investment Team — Chat (§6.5)")
+app = FastAPI(title="Stocker — Chat (§6.5)")
 router = APIRouter()
 
 
