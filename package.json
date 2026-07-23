@@ -19,5 +19,8 @@
     "ingest": "node scripts/py.mjs -m data.ingest",
     "costs": "node scripts/py.mjs -m ops.cost_report",
     "eval": "node scripts/eval.mjs"
+  },
+  "dependencies": {
+    "motion": "^12.42.2"
   }
 }
