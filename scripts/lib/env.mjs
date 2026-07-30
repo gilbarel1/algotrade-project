@@ -69,20 +69,78 @@ export function serviceEnv(fileEnv = loadEnvFile()) {
   return resolveRepoPaths(merged);
 }
 
-export function venvPythonPath(repoRoot = REPO_ROOT) {
+/** Interpreter path inside a venv directory, per platform. */
+function pythonIn(venvDir) {
   return process.platform === "win32"
-    ? path.join(repoRoot, "quant_service", ".venv", "Scripts", "python.exe")
-    : path.join(repoRoot, "quant_service", ".venv", "bin", "python");
+    ? path.join(venvDir, "Scripts", "python.exe")
+    : path.join(venvDir, "bin", "python");
+}
+
+/**
+ * Where a venv may live, in preference order: `npm run setup`'s own target first, then a
+ * repo-root `.venv` (the layout you get creating one by hand from the repo root). VENV_PYTHON
+ * overrides both.
+ */
+function venvCandidates(repoRoot = REPO_ROOT) {
+  return [path.join(repoRoot, "quant_service", ".venv"), path.join(repoRoot, ".venv")];
+}
+
+/**
+ * A venv is only usable if its dependencies actually landed: an interrupted
+ * `pip install -r requirements.txt` (a failed torch download is the usual cause) leaves an
+ * interpreter that exists but dies on `import pandas`, which surfaces as a confusing
+ * ModuleNotFoundError from whichever npm script you ran. `pandas` is the sentinel — it is a
+ * hard requirement of the service and arrives late in the install.
+ */
+function isProvisioned(venvDir) {
+  const globs = process.platform === "win32"
+    ? [path.join(venvDir, "Lib", "site-packages")]
+    : (fs.existsSync(path.join(venvDir, "lib"))
+        ? fs
+            .readdirSync(path.join(venvDir, "lib"))
+            .map((v) => path.join(venvDir, "lib", v, "site-packages"))
+        : []);
+  return globs.some((dir) => fs.existsSync(path.join(dir, "pandas")));
+}
+
+/**
+ * The venv interpreter the npm scripts should use. Prefers a provisioned venv over a
+ * half-installed one, so a partial `quant_service/.venv` does not shadow a working
+ * `.venv` at the repo root. Falls back to setup.mjs's creation target when none exists yet.
+ */
+export function venvPythonPath(repoRoot = REPO_ROOT) {
+  if (process.env.VENV_PYTHON) return process.env.VENV_PYTHON;
+  const candidates = venvCandidates(repoRoot);
+  const usable = candidates.find((dir) => fs.existsSync(pythonIn(dir)) && isProvisioned(dir));
+  const present = candidates.find((dir) => fs.existsSync(pythonIn(dir)));
+  return pythonIn(usable ?? present ?? candidates[0]);
 }
 
 /** The venv interpreter, or a pointed error — system Python is the cause of the
  *  CERTIFICATE_VERIFY_FAILED / "playwright not installed" degraded-agent confusion. */
 export function requireVenvPython(repoRoot = REPO_ROOT) {
   const python = venvPythonPath(repoRoot);
+  if (process.env.VENV_PYTHON) {
+    // An explicit override is trusted as-is: it need not sit in a venv we can introspect.
+    if (!fs.existsSync(python)) {
+      throw new Error(`VENV_PYTHON points at a missing interpreter: ${python}`);
+    }
+    return python;
+  }
   if (!fs.existsSync(python)) {
+    const looked = venvCandidates(repoRoot)
+      .map((dir) => `  - ${path.relative(repoRoot, dir)}`)
+      .join("\n");
     throw new Error(
-      `No virtualenv at ${path.relative(repoRoot, python)}.\n` +
+      `No virtualenv found. Looked in:\n${looked}\n` +
         `Run  npm run setup  first (it creates the venv and installs requirements).`,
+    );
+  }
+  if (!isProvisioned(path.dirname(path.dirname(python)))) {
+    throw new Error(
+      `The virtualenv at ${path.relative(repoRoot, path.dirname(path.dirname(python)))} is ` +
+        `incomplete (no pandas installed).\n` +
+        `Finish it with  npm run setup  — or point VENV_PYTHON at a working interpreter.`,
     );
   }
   return python;

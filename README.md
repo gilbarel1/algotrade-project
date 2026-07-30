@@ -125,6 +125,10 @@ installs `requirements.txt`, downloads the Playwright Chromium the Earnings agen
 
 > First run downloads PyTorch and a headless Chromium — budget a few minutes and ~2 GB.
 
+Every `npm run …` script uses that venv. If you keep your own virtualenv at the repo root (`.venv`),
+the scripts pick it up instead — and if one venv exists but its install never finished, they say so
+rather than failing later on a missing import. `VENV_PYTHON=/path/to/python` overrides the search.
+
 ### 2. Add your keys to `.env`
 
 Run step 1 **first** — it generates `.env` from the template. Then put your keys in that

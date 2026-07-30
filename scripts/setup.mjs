@@ -52,9 +52,9 @@ if (fs.existsSync(venvPython)) {
   done(`${systemPython.version} (${systemPython.command})`);
 }
 
-heading("Virtualenv at quant_service/.venv");
+heading(`Virtualenv at ${path.relative(REPO_ROOT, path.dirname(path.dirname(venvPython)))}`);
 if (fs.existsSync(venvPython)) {
-  done("already exists");
+  done("already exists — installing into it");
 } else {
   run(systemPython.command, [...systemPython.prefix, "-m", "venv", ".venv"], { cwd: SERVICE_DIR });
   done("created");
