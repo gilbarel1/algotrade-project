@@ -338,7 +338,15 @@ def _scrape_ticker(
                     doc_language = _text_language(excerpt)
                     if doc_language:
                         item["language"] = doc_language
-                    errors.extend(exc_errors)
+                    # Only a candidate left with NO verbatim text degrades the
+                    # fetch (§3.2). A ladder that fell through to a lower layer
+                    # still produced text, and which layer it reached is already
+                    # reported as `excerpt_source` — same rule _pdf_excerpt
+                    # applies to its own URL fallback. Pooling these instead
+                    # lets a candidate that loses selection, and is never
+                    # extracted from, degrade the agent and force `avoid`.
+                    if not excerpt:
+                        errors.extend(exc_errors)
                 return items, errors
             finally:
                 browser.close()

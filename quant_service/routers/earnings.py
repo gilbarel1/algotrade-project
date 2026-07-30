@@ -130,6 +130,26 @@ def earnings_fetch(req: EarningsFetchRequest):
         f"{len(items)} disclosure(s) in window: {n_en} EN, {n_he} HE "
         f"(window {window}d); {n_excerpted} ranked candidate(s) to classify."
     )
+    # A candidate that resolved to a lower layer is not a degrade (§3.2), but it
+    # is why its figures may come out "ambiguous" — so say so plainly, without
+    # the `degraded:` prefix that would mark the whole agent degraded (§9.4).
+    fell_back = sorted(
+        {
+            str(i.get("excerpt_source"))
+            for i in items
+            if i.get("excerpt") and i.get("excerpt_source") != maya.PRESS_RELEASE
+        }
+    )
+    if fell_back:
+        n_fell_back = sum(
+            1
+            for i in items
+            if i.get("excerpt") and i.get("excerpt_source") != maya.PRESS_RELEASE
+        )
+        summary += (
+            f" {n_fell_back} candidate(s) fell back to a lower excerpt layer "
+            f"({', '.join(fell_back)}); their figures may be ambiguous."
+        )
     # Degrade only when the fetch failed somewhere AND coverage may be
     # incomplete because of it. A healthy fetch with zero matching rows is a
     # genuine "no recent disclosure" (§13/§14), left for the sub-workflow.

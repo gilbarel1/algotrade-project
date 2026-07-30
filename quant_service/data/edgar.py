@@ -415,7 +415,11 @@ def _fetch(
                 )
                 item["excerpt"] = excerpt
                 item["excerpt_source"] = layer if excerpt else ""
-                errors.extend(exc_errors)
+                # Only an excerpt-less candidate degrades the fetch (§3.2) — the
+                # EX-99 → primary-document fallback still yields verbatim text,
+                # and `excerpt_source` already says which layer it came from.
+                if not excerpt:
+                    errors.extend(exc_errors)
 
             for item in items:
                 item.pop("_primary_url", None)

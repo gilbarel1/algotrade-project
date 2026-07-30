@@ -111,6 +111,7 @@ Each agent is an n8n sub-workflow. Sentiment, Earnings, and Technical run in par
   3. `mayafiles.tase.co.il/rpdf/<bucket>/P<id>-00.pdf` — **the attached press release / financial statement: the verbatim source of revenue, EPS and guidance.** Text-based (not scanned), so it extracts without OCR.
 
   The excerpt returned by `/earnings/fetch` is therefore taken from **layer 3**: resolve the report id's PDF attachment, extract its text, and bound it to `_EXCERPT_MAX`. Reading only layer 1 (the naive `body.innerText`) yields an excerpt in which no figure is ever present, so every field votes `"ambiguous"` and §3.2's self-consistency never commits — the mechanism is intact but never exercised. `<bucket>` is the report id rounded to its enclosing 1000 (id `1737984` → `1737001-1738000`). When the PDF is unreachable or carries no extractable text, the agent falls back to the layer-2 cover sheet and then the title alone; figures then come out `"ambiguous"`, never invented (§9.4).
+- **A layer fallback is a resolution, not a degrade.** Only a candidate left with **no excerpt at all** contributes a degrade reason to the fetch. A candidate whose ladder fell through to a lower layer still produced verbatim text, and *which* layer it reached is already reported per item as `excerpt_source` (§5) — where §3.2's selection tie-break consumes it. The distinction matters because the errors of the layer walk are pooled across candidates and any one of them prefixes the whole summary `degraded:` (§5), which the sub-workflow reads as agent `status: "degraded"` — and two degraded agents force `avoid` (§3.4). So a fallback on a candidate that **loses selection and is never extracted from** would otherwise decide the run's recommendation. Verified live (TEVA.TA, 2026-07-30): report `1760113`'s attachment 404'd on both URL patterns and resolved to its cover sheet, while the two press-release candidates carried full excerpts (`$4.1 billion`, `$696 million`) — and the cover-sheet candidate could not have won selection anyway, since the layer tie-break ranks `press_release` above it. The run nevertheless returned `avoid`/`low` on two degraded agents. This mirrors the rule already applied *inside* the PDF ladder, where a 404 on the preferred URL followed by a hit on the fallback is likewise not surfaced; the amendment applies the same principle *across* layers. The consequence of a thin excerpt is still surfaced honestly, at the level where it actually bites: the summary says how many candidates fell back, and figures absent from the text come out `"ambiguous"` (§13).
 - **Output (JSON).**
   `selected_disclosure` is the disclosure the agent classified *and* extracted from — the most material of the ranked candidates, not necessarily the newest. `considered` lists the other classified candidates so a reviewer can see what was rejected and why the winner won; it is the audit trail for the selection and carries no figures (only the winner is extracted from).
   ```jsonc
@@ -431,6 +432,10 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
 // `primary_document`; Maya's rendered page is `cover_sheet`. §3.2 selection
 // prefers the earlier layers, so the market rule stays server-side.
 // Scrape failure degrades, never 500s: summary prefixed "degraded: <reason>".
+// A candidate that resolved to a LOWER layer is not a failure and does not
+// degrade (§3.2): the summary appends "N candidate(s) fell back to a lower
+// excerpt layer" and `excerpt_source` names it per item. Only a candidate left
+// with no excerpt at all contributes a "degraded:" reason.
 
 // POST /earnings/store
 { "ticker":"TEVA.TA",
