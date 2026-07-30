@@ -359,7 +359,8 @@ any of them. Design [§13](docs/design.md) has the full detail and the reasoning
 **Reasoning and scope**
 
 - **The three-pass critique loop reduces overconfidence but does not guarantee correctness.** It is a
-  structured reasoning aid, not a financial-validity guarantee, and the PDF disclaims this explicitly.
+  structured reasoning aid, not a financial-validity guarantee. The PDF's methodology footer says so
+  in as many words, alongside its educational / not-investment-advice disclaimer.
 - **No live execution and no return measurement.** The system produces recommendations and rationales;
   it never checks whether they would have made money. A backtest is the natural next step and is
   listed as future work in [`docs/results.md`](docs/results.md).
