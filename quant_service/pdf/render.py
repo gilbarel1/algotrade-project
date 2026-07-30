@@ -369,9 +369,20 @@ def _report_paths(now: Optional[datetime] = None) -> tuple[str, str]:
     """
     local = (now or datetime.now(_IL_TZ)).astimezone(_IL_TZ)
     report_dir = _report_dir()
-    rel = f"{report_dir}/{local:%Y-%m-%d}/{local:%H%M}/report.pdf"
     base = report_dir if os.path.isabs(report_dir) else os.path.join(_REPO_ROOT, report_dir)
     abs_path = os.path.join(base, f"{local:%Y-%m-%d}", f"{local:%H%M}", "report.pdf")
+    # Derive `rel` from the absolute path rather than interpolating `report_dir`:
+    # REPORT_DIR can arrive already absolute (the dev runner absolutises it before
+    # spawning the service, §11.1), and interpolating that stored a machine-specific
+    # path with mixed separators in `runs.report_path` instead of the §8.3 form.
+    try:
+        rel = os.path.relpath(abs_path, _REPO_ROOT).replace(os.sep, "/")
+    except ValueError:  # a different drive on Windows has no relative form
+        rel = abs_path.replace(os.sep, "/")
+    if rel.startswith("../"):
+        # A report dir outside the repo has no repo-relative form worth storing;
+        # keep the unambiguous absolute path rather than a ../.. chain.
+        rel = abs_path.replace(os.sep, "/")
     return abs_path, rel
 
 
