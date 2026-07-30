@@ -251,9 +251,9 @@ report_dir: "reports"
 # attribute each agent sub-execution's LLM calls to an agent name in `costs` (§9.4),
 # since n8n exposes token usage only through its execution API.
 n8n_workflow_ids:
-  technical: "81TNoBqkAasjafvT"
-  sentiment: "KnV1HngeDrOcVcqH"
-  earnings: "7SU3ioCng1HsFMkl"
-  risk_manager: "NgajAcDX26YE3i98"
+  technical: "QKgQhOcSHhonaSeU"
+  sentiment: "UHDnqm1kskJsrLfe"
+  earnings: "qXUgudS4QJVKL1mX"
+  risk_manager: "Z2XTkSCwPzwf1CxN"
   # §6.5 chat assistant — its own tokens reach `costs` as the `chat` agent (§9.4).
-  chat: "oXFSZwkpmKO8BHRw"
+  chat: "vB1dUBYb6xTezUAW"
