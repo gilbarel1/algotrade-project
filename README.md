@@ -320,6 +320,58 @@ marks everything else `ambiguous` — i.e. the "never invent numbers" guarantee,
 
 ---
 
+## Limitations
+
+Stated up front rather than discovered later. Each of these is a real constraint on what the output
+means; the system is built to **degrade visibly** into `degraded` / `ambiguous` rather than paper over
+any of them. Design [§13](docs/design.md) has the full detail and the reasoning behind each.
+
+**News and sentiment**
+
+- **Coverage of TA-35 mid-caps is patchy** outside the largest names. Sentiment for a thinly-covered
+  ticker is legitimately thin — the report prints the article count and never pads it.
+- **HeBERT is a general Hebrew sentiment model, not a finance-tuned one.** It is measurably weaker on
+  financial Hebrew than FinBERT is on financial English, which is why the [evaluation
+  results](#evaluation-results) report the two arms separately instead of averaging the gap away.
+- **A derived search term is weaker than a hand-tuned one.** So that any S&P 500 name works without
+  500 config entries, an unlisted US ticker's news query is derived from its SEC *registrant* name.
+  Where that differs from the name the press uses — "Alphabet" vs. "Google" — the query is simply
+  wrong and returns nothing, so divergent names are curated by hand in `search_terms`. The
+  `newsapi_domains` publisher allowlist keeps precision high but is itself fixed: an outlet not on it
+  is invisible. The endpoint says when a term was derived, so thin coverage is explainable.
+- **NewsAPI's free tier (100 requests/day) binds harder on a bigger universe.** A mixed TA-35 + S&P 500
+  watchlist multiplies per-ticker calls; trim the watchlist or pay for a tier. A quota-exhausted fetch
+  degrades rather than fabricating coverage.
+
+**Earnings extraction**
+
+- **Maya scraping is best-effort.** The site is a JavaScript SPA behind bot protection, rendered
+  server-side in headless Chromium. A layout change or a bot-block can still break the harvest; the
+  agent then marks fields `ambiguous` — or degrades to "no recent disclosure" — rather than guess.
+- **Figures live in a PDF attachment two layers below the disclosure page.** The page itself carries
+  none, so a scanned PDF with no text layer or an unreachable attachment yields `ambiguous` figures
+  despite a correctly classified disclosure.
+- **EDGAR excerpts come from 8-K press-release exhibits, whose formatting varies wildly** between
+  issuers. Extraction is a bounded text excerpt, not a structured parse. The primary-document fallback
+  is thinner still: a 10-Q's figures sit in iXBRL statement *tables* that flatten into label/number
+  runs as text, making a periodic report a materially worse source than the press release an 8-K attaches.
+
+**Reasoning and scope**
+
+- **The three-pass critique loop reduces overconfidence but does not guarantee correctness.** It is a
+  structured reasoning aid, not a financial-validity guarantee, and the PDF disclaims this explicitly.
+- **No live execution and no return measurement.** The system produces recommendations and rationales;
+  it never checks whether they would have made money. A backtest is the natural next step and is
+  listed as future work in [`docs/results.md`](docs/results.md).
+- **A one-field model swap is not a no-op below the prompt.** Models differ in how often they clear a
+  Pydantic boundary first time, and the retry path is a *different branch* of the workflow graph.
+  Swapping the Earnings model surfaced a latent fan-in bug that the previous model had masked, so any
+  node reasoning over a whole *set* — selection, voting, aggregation — needs auditing when a model changes.
+- **OpenRouter pricing and model availability can change.** Every agent's model is a one-field swap,
+  and the `costs` table is the arbiter of what a run actually costs.
+
+---
+
 ## Further reading
 
 - **[`docs/design.md`](docs/design.md)** — the full technical design: architecture, endpoint
