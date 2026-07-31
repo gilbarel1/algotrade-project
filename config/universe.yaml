@@ -246,14 +246,18 @@ rss_feeds:
 schedule_cron: "0 0 10-23 * * 0-5"
 report_dir: "reports"
 
-# n8n sub-workflow ids (§6.2, §4.4). Filled in after importing the agent workflows
-# into n8n (Workflows -> the id in the editor URL). /costs/harvest uses these to
-# attribute each agent sub-execution's LLM calls to an agent name in `costs` (§9.4),
-# since n8n exposes token usage only through its execution API.
-n8n_workflow_ids:
-  technical: "QKgQhOcSHhonaSeU"
-  sentiment: "UHDnqm1kskJsrLfe"
-  earnings: "qXUgudS4QJVKL1mX"
-  risk_manager: "Z2XTkSCwPzwf1CxN"
-  # §6.5 chat assistant — its own tokens reach `costs` as the `chat` agent (§9.4).
-  chat: "vB1dUBYb6xTezUAW"
+# n8n sub-workflow ids (§6.2, §4.4). /costs/harvest uses these to attribute each agent
+# sub-execution's LLM calls to an agent name in `costs` (§9.4), since n8n exposes token
+# usage only through its execution API.
+#
+# NORMALLY LEAVE THIS EMPTY. A workflow id is minted by the import, so it differs on
+# every machine — committing one developer's ids makes the harvest 404 for everyone
+# else, and `costs` stays empty while the run still looks green. /costs/harvest instead
+# resolves ids at harvest time (§4.4), first hit wins:
+#   1. N8N_WF_TECHNICAL / _SENTIMENT / _EARNINGS / _RISK_MANAGER / _CHAT in .env
+#      (gitignored — pin your own ids without touching a tracked file).
+#   2. Lookup by workflow NAME through the n8n API, keyed on the names in n8n/*.json.
+#      A fresh import needs no configuration at all.
+#   3. This block, as a last-resort default.
+# Add an entry here only for a workflow renamed in n8n whose env var is unset.
+n8n_workflow_ids: {}

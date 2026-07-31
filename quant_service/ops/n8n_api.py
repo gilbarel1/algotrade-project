@@ -63,6 +63,17 @@ def _get(path: str, params: Optional[dict] = None) -> dict:
     return resp.json()
 
 
+def list_workflows() -> List[dict]:
+    """Every workflow in this n8n, as `{id, name, ...}` (§4.4 name lookup).
+
+    Workflow ids are minted by the import and so differ per machine; the names in
+    this repo's `n8n/*.json` do not. `/costs/harvest` maps agent -> id through
+    this rather than through a tracked config file.
+    """
+    body = _get("/workflows", {"limit": _PAGE_LIMIT})
+    return body.get("data") or []
+
+
 def list_executions(workflow_id: str) -> List[dict]:
     """Execution metadata for one workflow, newest first (no run data)."""
     body = _get("/executions", {"workflowId": workflow_id, "limit": _PAGE_LIMIT})

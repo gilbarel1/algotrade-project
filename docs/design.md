@@ -333,14 +333,28 @@ rss_feeds:
 schedule_cron: "0 0 10-23 * * 0-5"
 report_dir: "reports"
 # n8n sub-workflow ids (§6.2). Used by /costs/harvest to attribute each agent
-# sub-execution's LLM calls to an agent name in `costs` (§9.4). Filled in after the
-# agent workflows are imported into n8n.
-n8n_workflow_ids:
-  technical: "81TNoBqkAasjafvT"
-  sentiment: "KnV1HngeDrOcVcqH"
-  earnings: "7SU3ioCng1HsFMkl"
-  risk_manager: "NgajAcDX26YE3i98"
-  chat: "oXFSZwkpmKO8BHRw"   # §6.5 chat assistant — its tokens reach `costs` (§9.4)
+# sub-execution's LLM calls to an agent name in `costs` (§9.4).
+#
+# A workflow id is MINTED BY THE IMPORT, so it differs on every machine — which
+# makes it the wrong thing to track in a shared file. Committing one developer's
+# ids silently breaks attribution for everyone else (their ids 404, the harvest
+# degrades, and `costs` stays empty with the run otherwise green). Ids are
+# therefore resolved at harvest time, first hit wins:
+#
+#   1. `N8N_WF_<AGENT>` in the environment (§11.1) — gitignored via .env, so a
+#      machine can pin its own ids without touching a tracked file.
+#   2. **Lookup by workflow name** through the n8n API. The names in this repo's
+#      `n8n/*.json` are the lookup keys ("Technical Agent (§3.2)" and friends),
+#      so a fresh import needs no configuration at all: import, and the harvest
+#      finds it. Matching is exact first, then on the name before " (" so the
+#      section-number suffix can drift. An ambiguous name (two workflows match)
+#      resolves to neither and falls through.
+#   3. The block below, as a last-resort default.
+#
+# Because (2) covers the normal case, the block is optional and ships EMPTY —
+# entries here are only needed when a workflow was renamed in n8n and the env
+# var is not set. `/costs/harvest` reports which agents resolved and how.
+n8n_workflow_ids: {}
 ```
 
 `config/rubric.yaml` holds the Risk Manager rubric thresholds. The rubric, the Risk
@@ -367,7 +381,7 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
 | `POST /runs/start`   | Open a run: mint the `run_id`, write the `runs` row (§4.2), and return the run's config (watchlist + windows from `config/universe.yaml`) so the orchestrator never hardcodes them (§4.4). **In `scheduled` mode this is also the per-market gate (§6.1)**: the watchlist is filtered to tickers whose market is currently in session, and when none is, the call returns `skipped: true` with `run_id: null` **without minting a run id or writing a `runs` row**. `manual` and `chat` runs are never filtered. n8n cannot write DuckDB directly, so every orchestration write is served over HTTP — same precedent as `/news/store` and `/earnings/store` |
 | `POST /runs/finish`  | Close a run: set `finished_at`, `status`, `report_path` on the `runs` row |
 | `POST /recommendations/store` | Upsert one per-ticker `recommendations` row (draft/critique/final + the three agent outputs + `agent_status`), keyed `(run_id, ticker)` (§4.2) |
-| `POST /costs/harvest` | Log the run's LLM costs into `costs` (§4.2, §9.4). Token usage is **not reachable inside an n8n workflow** — the LLM chain node emits only its text and a Code node cannot read the Chat Model sub-node's run data — so the quant service reads the agents' sub-executions from n8n's REST API (`N8N_API_URL`/`N8N_API_KEY`, §11.1) and pulls the real `tokenUsage` (prompt/completion), the model, and each call's `executionTime` (→ `latency_ms`) per LLM call. `usd_cost` is computed server-side from the §7 price table. The orchestrator calls this once after the fan-out, when every sub-execution has finished and been persisted. Idempotent: re-harvesting a `run_id` rewrites the same totals. Degrades (never 500s) if the n8n API is unreachable |
+| `POST /costs/harvest` | Log the run's LLM costs into `costs` (§4.2, §9.4). Token usage is **not reachable inside an n8n workflow** — the LLM chain node emits only its text and a Code node cannot read the Chat Model sub-node's run data — so the quant service reads the agents' sub-executions from n8n's REST API (`N8N_API_URL`/`N8N_API_KEY`, §11.1) and pulls the real `tokenUsage` (prompt/completion), the model, and each call's `executionTime` (→ `latency_ms`) per LLM call. Which workflow belongs to which agent is resolved per the §4.4 ladder — `N8N_WF_<AGENT>`, then lookup by workflow name against the same API, then `n8n_workflow_ids` — and the summary names the agents that resolved and how. `usd_cost` is computed server-side from the §7 price table. The orchestrator calls this once after the fan-out, when every sub-execution has finished and been persisted. Idempotent: re-harvesting a `run_id` rewrites the same totals. Degrades (never 500s) if the n8n API is unreachable |
 | `POST /riskmanager/context` | Serve the Risk Manager sub-workflow its three pass prompts (from `prompts/risk_manager_*.md`), the rubric thresholds (from `config/rubric.yaml`), and the **deterministic** §3.4 rubric facts (directional mapping, strong-signal flags, agreement counts, applicable conviction caps) computed from the agent outputs. Keeps prompts and rubric server-side (never hardcoded in the workflow) and makes the rubric a mechanism, not just an instruction — mirrors the server-side few-shot loading in `/news/fetch` and `/earnings/fetch`. Read-only; degrades (never 500s) on partial agent input |
 
 ```jsonc
@@ -731,6 +745,11 @@ QUANT_SERVICE_URL         # http://localhost:8000 (or host.docker.internal:8000 
 N8N_API_URL               # http://localhost:5678 — n8n REST API, read by /costs/harvest (§9.4)
 N8N_API_KEY               # n8n API key (Settings → n8n API); token usage is only exposed there
 N8N_CHAT_WEBHOOK_URL      # http://localhost:5678/webhook/<chat-id>/chat — target of the frontend proxy (§6.5)
+N8N_WF_TECHNICAL          # optional per-machine override of an agent's n8n workflow id (§4.4).
+N8N_WF_SENTIMENT          # One per agent: TECHNICAL, SENTIMENT, EARNINGS, RISK_MANAGER, CHAT.
+N8N_WF_EARNINGS           # Unset is the normal case — /costs/harvest resolves the id by
+N8N_WF_RISK_MANAGER       # workflow NAME through the n8n API. Set one only when a workflow
+N8N_WF_CHAT               # was renamed in n8n, since the name lookup then cannot find it.
 EDGAR_USER_AGENT          # SEC-required declared User-Agent with contact email (§4.1), read by
                           # data/edgar.py — e.g. "algotrade-project you@example.com". Unset ⇒
                           # /earnings/fetch degrades for `us` tickers (never fabricates, §9.4)
