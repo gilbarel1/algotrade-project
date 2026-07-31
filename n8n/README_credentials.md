@@ -63,19 +63,28 @@ service over HTTP — but it calls the four agents **by workflow id**:
 2. Import `n8n/orchestrator.workflow.json`. Its four **Execute Sub-workflow** nodes (Technical,
    Sentiment, Earnings, Risk Manager) carry the ids of the workflows in *this* n8n instance —
    if yours differ, re-pick the workflow in each node.
-3. The same ids must appear in `config/universe.yaml → n8n_workflow_ids`, which is how
-   `/costs/harvest` attributes each sub-execution's LLM calls to an agent.
-4. Run it with **Execute workflow**. It fans out over `watchlist` from `config/universe.yaml`
+3. **Nothing to copy into config.** `/costs/harvest` resolves each agent's workflow id by
+   **name** through the n8n API (§4.4), keyed on the `name` fields in this repo's `n8n/*.json`,
+   so attribution works immediately after an import. Ids are minted per import and must never be
+   committed — a tracked id 404s on every other machine and the harvest degrades silently. Set
+   `N8N_WF_<AGENT>` in `.env` (gitignored) only if you renamed a workflow in n8n;
+   `config/universe.yaml → n8n_workflow_ids` remains as a last-resort default and ships empty.
+4. **Publish the sub-workflows too.** n8n refuses to publish a workflow whose referenced
+   sub-workflows are unpublished (*"references workflow … which is not published"*), so publish
+   the four agents before the orchestrator, and the orchestrator before the chat assistant.
+5. Run it with **Execute workflow**. It fans out over `watchlist` from `config/universe.yaml`
    (35 names by default — trim it for a demo run; the list is read from the service at
    `/runs/start`, so no workflow edit is needed).
 
 **Re-importing after Step 10:** if the orchestrator already exists in your instance, don't
 create a second copy — open the existing workflow and re-import over it (or paste the new
-nodes) so the id in `n8n_workflow_ids` stays valid. Step 10 added a **Schedule Trigger** and a
-**TASE Hours Gate** on a second entry path; the agent-id wiring (step 2 above) is unchanged.
+nodes), so its id stays stable for anything that references it. Step 10 added a **Schedule
+Trigger** and a **TASE Hours Gate** on a second entry path; the agent-id wiring (step 2 above)
+is unchanged — and re-importing resets it, so re-pick the four nodes afterwards.
 
 **Schedule Trigger (Step 10, §6.1/§11.2).** The scheduled path fires on `schedule_cron`
-(`0 10-17 * * 0-4`, hourly Sun–Thu 10:00–17:00). For it to fire at all: (a) set
+(`0 0 10-23 * * 0-5` — n8n's cron is 6-field, seconds first; hourly 10:00–23:00 Israel time,
+Sun–Fri, spanning both the TASE and NYSE windows since Step 13). For it to fire at all: (a) set
 `TZ=Asia/Jerusalem` in n8n's env so the cron reads as local time, and (b) toggle the workflow
 **Active** — inactive workflows never run on schedule. The cron spans both markets' windows in
 Israeli local time; the **per-market gate lives in the quant service** (`/runs/start`, §6.1), which

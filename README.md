@@ -181,9 +181,11 @@ The short version:
    `n8n/orchestrator.workflow.json`, then `n8n/chat_assistant.workflow.json`.
 3. Open each **Chat Model** node and re-select your OpenRouter credential — imported JSONs carry a
    `REPLACE_AFTER_IMPORT` placeholder. (The Earnings Agent has **two** such nodes.)
-4. Copy each imported workflow's id (from the editor URL, `/workflow/<id>`) into
-   `config/universe.yaml → n8n_workflow_ids`. The orchestrator calls its agents **by id**, so these
-   must match.
+4. Open the orchestrator's four **Execute Sub-workflow** nodes and re-pick each agent — the
+   imported JSON carries the ids of whichever instance it was exported from, and an import mints
+   new ones. Nothing to copy into config: `/costs/harvest` finds each agent by **workflow name**
+   (§4.4), so cost attribution works straight after an import. Set `N8N_WF_<AGENT>` in `.env` only
+   if you rename a workflow in n8n.
 
 ### 6. Run the team
 
@@ -212,12 +214,12 @@ conviction, rationale, and the PDF path. Follow-ups resolve from memory — *"an
 `NVDA` (US names take the bare symbol; TA-35 names take `.TA`). Ask for a price target and it
 declines rather than inventing one.
 
-Three one-time wiring steps after importing `chat_assistant.workflow.json` (details in
-[`n8n/README_credentials.md`](n8n/README_credentials.md)): put its id in
-`config/universe.yaml → n8n_workflow_ids.chat`; point its `run_investment_analysis` tool node at
-your imported orchestrator; and copy the **Chat Trigger** node's Production URL into
-`N8N_CHAT_WEBHOOK_URL`. The orchestrator must also be **Published/Active** — n8n won't execute an
-inactive workflow.
+Two one-time wiring steps after importing `chat_assistant.workflow.json` (details in
+[`n8n/README_credentials.md`](n8n/README_credentials.md)): point its `run_investment_analysis` tool
+node at your imported orchestrator, and copy the **Chat Trigger** node's Production URL into
+`N8N_CHAT_WEBHOOK_URL`. Its id needs no config entry — the harvest resolves it by name (§4.4).
+The orchestrator **and its four sub-workflows** must all be **Published/Active**: n8n refuses to
+publish a workflow whose referenced sub-workflows are not themselves published.
 
 ---
 
