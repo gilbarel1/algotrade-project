@@ -187,6 +187,16 @@ This visibly demonstrates non-trivial prompt engineering, makes the model's reas
 
 `short` requires at least one **strong** bearish signal in addition to the count. `avoid` is reserved for cases where `status = "degraded"` on two or more agents (insufficient evidence) — never confused with a directional call.
 
+**A degraded agent carries no information.** `status: "degraded"` means the agent could not
+measure, so it is neutral by definition and contributes nothing to the agreement count in
+either direction. Its emptiness is never itself a signal: zero news items because a key was
+rejected says something about the system, not about the company, and a pass that reads
+absence as evidence has fabricated a signal exactly as surely as inventing a number would
+(§3.2's guarantee, applied to reasoning rather than figures). The reason text is diagnostic
+— it explains the gap to a reader, it is not input to the call. All three passes are told
+this, and each panel carries its `status` (§6.3) so the rule is checkable rather than
+inferred from prose.
+
 **Conviction caps (applied after the count):**
 
 - **Earnings event cap.** `materiality = high` within `earnings_window_days` caps conviction at `medium` (event risk), regardless of agreement count.
@@ -581,14 +591,24 @@ Top-level flow:
                 "conviction_challenge":"high → medium" },
   "final":   { "recommendation":"long", "conviction":"medium",
                 "rationale":"Two of three signals constructive; dual-sentiment disagreement (0.14) is below threshold but earnings window in 4 days warrants conviction cap. Critique objection on event risk incorporated." },
-  "sentiment":{ "llm_sentiment":-0.12, "model_sentiment":-0.05, "disagreement":0.07,
+  "sentiment":{ "status":"ok", "llm_sentiment":-0.12, "model_sentiment":-0.05, "disagreement":0.07,
                  "summary":"Mixed; mild negative bias." },
-  "earnings":{ "is_window":false, "materiality":"low",
+  "earnings":{ "status":"ok", "is_window":false, "materiality":"low",
                 "summary":"No recent disclosures." },
-  "technical":{ "signal":"bullish_momentum",
+  "technical":{ "status":"ok", "signal":"bullish_momentum",
                  "summary":"Momentum building; RSI 62, MACD positive." }
 }
 ```
+
+Each panel carries the agent's `status` (§3.4 enum). It is not decoration: without it the
+only trace of a failed agent in the prompt is prose inside `summary`, and a model reading
+`"llm_sentiment": null` beside *"0 items after cleaning"* treats the failure as a measured
+zero rather than an absent measurement. Verified live (NFLX, 2026-07-30): the sentiment
+agent degraded on a NewsAPI 401, and the critique pass argued that *"complete absence of
+news signal … is itself a material anomaly"* — either lost investor interest or masked bad
+news, both bearish — which the final pass then incorporated. That is an inference about the
+**company** drawn from a fact about the **API key**. `status` makes the distinction
+machine-readable, and §3.4 states what it means.
 
 ### 6.4 OpenRouter wiring
 
