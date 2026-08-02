@@ -10,16 +10,16 @@ Run: uvicorn app:app --port 8000
 from fastapi import FastAPI
 
 from routers import (
-    ohlc,
-    indicators,
-    sentiment,
-    news,
+    costs,
     earnings,
+    indicators,
+    news,
+    ohlc,
     report,
-    validate,
     riskmanager,
     runs,
-    costs,
+    sentiment,
+    validate,
 )
 
 app = FastAPI(

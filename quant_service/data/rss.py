@@ -14,7 +14,6 @@ reachable) (§9.4).
 
 from __future__ import annotations
 
-import time
 from calendar import timegm
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple

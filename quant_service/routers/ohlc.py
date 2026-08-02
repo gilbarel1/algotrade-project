@@ -59,7 +59,8 @@ def ohlc(req: OHLCRequest):
             "v": int(v),
         }
         for ts, o, h, low, c, v in zip(
-            df["ts"], df["open"], df["high"], df["low"], df["close"], df["volume"]
+            df["ts"], df["open"], df["high"], df["low"], df["close"], df["volume"],
+            strict=True,  # columns of one frame: unequal lengths would be a real bug
         )
     ]
     as_of = candles[-1]["ts"]

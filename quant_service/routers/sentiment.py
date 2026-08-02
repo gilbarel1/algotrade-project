@@ -56,7 +56,10 @@ def sentiment(req: SentimentRequest):
             logger.warning("sentiment scoring failed for %s: %s", model_tag, exc)
             degraded_reasons.append(f"{model_tag} unavailable ({exc})")
             continue
-        for i, value in zip(indices, values):
+        # Deliberately not strict=True: a length mismatch would mean the scorer
+        # misbehaved, and raising here would 500 an endpoint whose contract is to
+        # degrade (§9.4). Short output simply leaves those items unscored.
+        for i, value in zip(indices, values):  # noqa: B905
             scores[i] = {
                 "id": req.items[i].id,
                 "score": round(float(value), 4) + 0.0,  # normalize -0.0 -> 0.0

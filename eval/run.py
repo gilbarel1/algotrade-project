@@ -374,7 +374,7 @@ def pearson(xs: List[float], ys: List[float]) -> Optional[float]:
     mx, my = sum(xs) / n, sum(ys) / n
     sxx = sum((x - mx) ** 2 for x in xs)
     syy = sum((y - my) ** 2 for y in ys)
-    sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys, strict=True))
     if sxx == 0 or syy == 0:
         return None
     return sxy / (sxx * syy) ** 0.5
@@ -383,9 +383,9 @@ def pearson(xs: List[float], ys: List[float]) -> Optional[float]:
 def macro_f1(truth: List[str], pred: List[str], classes: List[str]) -> float:
     f1s = []
     for c in classes:
-        tp = sum(1 for t, p in zip(truth, pred) if t == c and p == c)
-        fp = sum(1 for t, p in zip(truth, pred) if t != c and p == c)
-        fn = sum(1 for t, p in zip(truth, pred) if t == c and p != c)
+        tp = sum(1 for t, p in zip(truth, pred, strict=True) if t == c and p == c)
+        fp = sum(1 for t, p in zip(truth, pred, strict=True) if t != c and p == c)
+        fn = sum(1 for t, p in zip(truth, pred, strict=True) if t == c and p != c)
         prec = tp / (tp + fp) if (tp + fp) else 0.0
         rec = tp / (tp + fn) if (tp + fn) else 0.0
         f1s.append(2 * prec * rec / (prec + rec) if (prec + rec) else 0.0)
@@ -452,7 +452,7 @@ def run_earnings_classifier(svc: Services, data: List[dict], few_shot: List[dict
         pred_kind.append(payload["kind"])
         truth_mat.append(disc["truth"]["materiality"])
         pred_mat.append(payload["materiality"])
-    mat_acc = (sum(1 for t, p in zip(truth_mat, pred_mat) if t == p) / len(truth_mat)) if truth_mat else None
+    mat_acc = (sum(1 for t, p in zip(truth_mat, pred_mat, strict=True) if t == p) / len(truth_mat)) if truth_mat else None
     return {
         "n": len(truth_kind),
         "degraded": degraded,

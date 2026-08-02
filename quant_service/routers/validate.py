@@ -15,10 +15,10 @@ from typing import Any, Dict
 from fastapi import APIRouter
 from pydantic import BaseModel, ValidationError
 
-from schemas.technical import TechnicalNarration
-from schemas.sentiment import SentimentNarration
 from schemas.earnings import EarningsClassification, EarningsExtractionSample
-from schemas.risk_manager import RiskDraft, RiskCritique, RiskFinal
+from schemas.risk_manager import RiskCritique, RiskDraft, RiskFinal
+from schemas.sentiment import SentimentNarration
+from schemas.technical import TechnicalNarration
 
 router = APIRouter()
 

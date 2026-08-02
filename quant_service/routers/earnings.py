@@ -30,11 +30,9 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from data import cache, earnings_store, edgar, maya
-from data.markets import (
-    load_config as _load_config,
-    market as _market,
-    market_config as _market_config,
-)
+from data.markets import load_config as _load_config
+from data.markets import market as _market
+from data.markets import market_config as _market_config
 
 router = APIRouter()
 
