@@ -24,20 +24,13 @@ jobs:
         with:
           node-version: "20"
 
-      # Exactly what the offline suite imports at module level, and no more.
-      # Installing the full requirements would pull torch and Playwright (~2 GB) for
-      # tests that never touch a model, a browser or the network. WeasyPrint is absent
-      # on purpose: pdf/render.py imports it lazily inside render_pdf(), so the path
-      # tests exercise needs neither it nor the GTK runtime it depends on.
+      # From requirements-dev.txt, never a copy pasted here: an inline list drifts the
+      # moment a test imports a new module, which is how `feedparser` went missing on
+      # the first run. That file is also what a developer installs to reproduce CI.
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install \
-            pytest==9.1.1 ruff==0.16.1 \
-            pydantic==2.13.4 pyyaml==6.0.3 duckdb==1.5.4 \
-            fastapi==0.139.0 jinja2==3.1.6 httpx==0.28.1 \
-            pandas==3.0.3 numpy==2.2.6 pandas-ta==0.4.71b0 \
-            matplotlib==3.11.0 beautifulsoup4==4.15.0 tqdm==4.68.4
+          python -m pip install -r requirements-dev.txt
 
       - name: Lint
         run: python -m ruff check .

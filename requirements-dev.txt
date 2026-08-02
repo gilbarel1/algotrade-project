@@ -1,0 +1,33 @@
+# Dependencies for the offline test suite (tests/) and the linter — nothing else.
+#
+# This is what CI installs, and it is the ONLY list CI installs from: a hand-maintained
+# copy inside the workflow file drifts the moment a test imports a new module, which is
+# exactly how `feedparser` went missing on the first CI run.
+#
+# Deliberately NOT the full quant_service/requirements.txt: torch, Playwright and
+# WeasyPrint are ~2 GB of dependencies the offline suite never touches (WeasyPrint is
+# imported lazily inside render_pdf, so the code paths under test never reach it).
+#
+# Versions match quant_service/requirements.txt exactly. To regenerate the list of what
+# the suite actually needs:
+#   python -c "import sys,importlib; sys.path.insert(0,'quant_service'); ..."
+# — or simply: create a clean venv from this file and run `python -m pytest`.
+
+# --- tooling ---
+pytest==9.1.1
+ruff==0.16.1
+
+# --- imported at module level by the code under test ---
+pydantic==2.13.4
+pyyaml==6.0.3
+duckdb==1.5.4
+fastapi==0.139.0
+jinja2==3.1.6
+httpx==0.28.1
+pandas==3.0.3
+numpy==2.2.6
+pandas-ta==0.4.71b0
+matplotlib==3.11.0
+beautifulsoup4==4.15.0
+feedparser==6.0.12
+tqdm==4.68.4
