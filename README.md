@@ -229,6 +229,8 @@ publish a workflow whose referenced sub-workflows are not themselves published.
 | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `npm run dev`                                          | Quant service + chat front end + n8n, wired. Ctrl-C stops all.                                                                                           |
 | `npm run doctor`                                       | Preflight — Node, venv,`.env`, keys, DuckDB, ports. Starts nothing.                                                                                   |
+| `npm run test`                                         | The offline test suite (`tests/`) — no network, no API keys, no LLM calls. Runs in seconds.                                                          |
+| `npm run lint`                                         | `ruff` over the whole repo, using the ruleset in `pyproject.toml`.                                                                                |
 | `npm run smoke`                                        | Endpoint check against the running service.                                                                                                              |
 | `npm run ingest`                                       | Pull the watchlist's OHLC into the`prices` cache (keyless — Yahoo Finance).                                                                           |
 | `npm run costs`                                        | Per-run LLM cost summary.                                                                                                                                |
@@ -239,6 +241,30 @@ publish a workflow whose referenced sub-workflows are not themselves published.
 `npm run ingest` accepts `-- --symbols TEVA.TA` and `-- --lookback-days 90`. Ingestion is also
 **lazy** — `/ohlc` and `/indicators` fetch any symbol they don't have cached — so it's a pre-warm,
 not a prerequisite.
+
+### Tests
+
+```bash
+npm run test
+```
+
+**112 tests, offline, a few seconds** — no network, no API keys, no LLM spend, so they are safe to
+run on every change. They pin the parts where a silent regression would be expensive rather than
+obvious:
+
+| Area | What is pinned |
+| --- | --- |
+| **Market gate** (`test_markets.py`) | Symbol → market, and the per-market session gate in each market's own timezone — including the two-to-three-week windows where Israel and the US have swapped DST on different dates, which a fixed UTC offset gets wrong. |
+| **Rubric clamp** (`test_rubric_clamp.py`) | The §3.4 decision rules, executed **as the workflow's own JavaScript** — the test extracts `jsCode` from `n8n/agents/risk_manager.json` and runs it under Node, so it cannot drift from what n8n ships. |
+| **LLM boundary** (`test_schemas.py`) | Every Pydantic schema accepts the canonical enums and rejects invented ones, out-of-range scores, and extra fields a model might smuggle through. |
+| **Never invent numbers** (`test_schemas.py`, `test_earnings_degradation.py`) | Figure confidence must be 1–3; a lazy `{}` sample fails validation; an excerpt-layer fallback does *not* degrade, while a candidate with no verbatim text still does. |
+| **Cost accounting** (`test_cost_log.py`) | §7 prices, and that calls collapse onto the `(agent, model)` key with an unknown model priced at a visible 0.0 rather than crashing a run. |
+| **Workflow ids** (`test_workflow_ids.py`) | The §4.4 resolution ladder — env, then name lookup, then config — plus the ambiguity guard that refuses to guess between two same-named workflows. |
+| **Degraded wording** (`test_degraded_messages.py`) | Degraded reasons are printed verbatim in the PDF, so no layer may re-label what the layer below already labelled. |
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `ruff` and this suite on every
+push. It installs only what the suite imports — no torch, no Playwright, no GTK — so it finishes in
+under a minute.
 
 ---
 

@@ -1,0 +1,50 @@
+# Tooling config only — the service is run from `quant_service/`, not installed as a
+# package (see README). This file exists so `pytest` and `ruff` behave identically for
+# every developer and in CI, rather than depending on how each of us invokes them.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `quant_service/` is the service's import root: it runs with that as cwd, so tests
+# import `data.markets` / `routers.costs` the same way the app does (conftest.py puts
+# it on sys.path).
+pythonpath = ["quant_service"]
+addopts = "-q --strict-markers"
+filterwarnings = [
+    # pandas-ta touches a pandas option removed in 4.0; not ours to fix, and noisy.
+    "ignore:.*mode.copy_on_write.*:FutureWarning",
+    "ignore:.*mode.copy_on_write.*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".venv", "quant_service/.venv", "node_modules", "reports"]
+
+[tool.ruff.lint]
+# Correctness and consistency, deliberately not style modernization. `UP` (pyupgrade)
+# is excluded: it would rewrite ~300 `Dict[str, str]` -> `dict[str, str]` and
+# `Optional[X]` -> `X | None` annotations across every module. The existing style is
+# valid, internally consistent and typed; churning it adds review noise without
+# catching a single bug.
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes — undefined names, unused imports
+    "I",    # import sorting
+    "B",    # flake8-bugbear — likely bugs
+    "C4",   # comprehension clarity
+]
+ignore = [
+    "E501",  # line length is enforced by the formatter, not the linter
+    "B008",  # FastAPI's Depends() in defaults is the documented idiom
+]
+
+[tool.ruff.lint.isort]
+# The service runs with `quant_service/` as cwd, so these are first-party packages even
+# though they are not under a top-level source dir. Without this, isort files them as
+# third-party and interleaves them with fastapi/pydantic.
+known-first-party = ["data", "routers", "ops", "nlp", "pdf", "schemas", "indicators"]
+split-on-trailing-comma = false
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into the module internals they exist to pin.
+"tests/*" = ["E402"]
