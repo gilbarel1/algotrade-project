@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stocker — Specification &amp; Summary</title>
+<style>
+  @page {
+    size: A4;
+    margin: 2.1cm 2.3cm 1.8cm 2.3cm;
+    @bottom-center {
+      content: "Stocker — specification & summary   ·   " counter(page) " / " counter(pages);
+      font-size: 8pt; color: #8a8a8a; letter-spacing: 0.2pt;
+    }
+  }
+
+  html { font-family: "Segoe UI", "Calibri", Arial, sans-serif; }
+  body { font-size: 10.2pt; line-height: 1.55; color: #24292e; margin: 0; }
+
+  /* ---- title block ---------------------------------------------------- */
+  .title { font-size: 21pt; font-weight: 600; letter-spacing: -0.3pt; margin: 0 0 3pt 0; color: #14313f; }
+  .track { font-size: 10.5pt; color: #3a5a68; margin-bottom: 9pt; }
+  .byline {
+    font-size: 9pt; color: #6a737d;
+    border-top: 0.75pt solid #d6dade; border-bottom: 0.75pt solid #d6dade;
+    padding: 5pt 0; margin-bottom: 16pt;
+  }
+  .fillme { background: #fff08a; padding: 1pt 4pt; border-radius: 2pt; color: #3d3000; font-weight: 600; }
+
+  /* ---- headings ------------------------------------------------------- */
+  h2 {
+    font-size: 13pt; font-weight: 600; color: #14313f;
+    margin: 17pt 0 7pt 0; padding-bottom: 3pt;
+    border-bottom: 1pt solid #cfd6da;
+  }
+  h2:first-of-type { margin-top: 4pt; }
+  h3 { font-size: 10.6pt; font-weight: 600; color: #2c4a57; margin: 11pt 0 4pt 0; }
+
+  /* ---- text ----------------------------------------------------------- */
+  p { margin: 0 0 8pt 0; }
+  .lead { font-size: 10.6pt; color: #33404a; }
+  ul { margin: 4pt 0 10pt 0; padding-left: 15pt; }
+  li { margin-bottom: 5pt; padding-left: 2pt; }
+  b, strong { font-weight: 600; color: #16222b; }
+  code { font-family: Consolas, "Courier New", monospace; font-size: 9pt; color: #8a4a1f; }
+
+  /* ---- tables: horizontal rules only, generous padding ---------------- */
+  table { border-collapse: collapse; width: 100%; font-size: 9.4pt; margin: 8pt 0 12pt 0; }
+  th {
+    text-align: left; font-weight: 600; color: #14313f;
+    border-bottom: 1pt solid #9aa7ae; padding: 0 8pt 5pt 0;
+  }
+  td { border-bottom: 0.5pt solid #e3e7ea; padding: 6pt 8pt 6pt 0; vertical-align: top; line-height: 1.45; }
+  tr:last-child td { border-bottom: none; }
+  td:last-child, th:last-child { padding-right: 0; }
+  .agent-name { white-space: nowrap; font-weight: 600; color: #14313f; }
+  .metric { text-align: right; white-space: nowrap; }
+
+  /* ---- callout & figure ----------------------------------------------- */
+  .callout {
+    background: #f2f6f8; border-left: 3pt solid #4b7f96;
+    padding: 9pt 12pt; margin: 10pt 0 12pt 0; font-size: 9.8pt; line-height: 1.5;
+  }
+  .callout .h { font-weight: 600; color: #14313f; display: block; margin-bottom: 3pt; }
+  .figure { text-align: center; margin: 10pt 0 4pt 0; }
+  .figure img { max-width: 100%; border: 0.5pt solid #c8cfd4; }
+  .cap { font-size: 8.6pt; color: #6a737d; margin-top: 4pt; }
+
+  /* ---- typeset reasoning trace ---------------------------------------- */
+  .trace { border: 0.5pt solid #d6dade; border-radius: 2pt; margin: 8pt 0 4pt 0; }
+  .pass { padding: 7pt 11pt; border-bottom: 0.5pt solid #e3e7ea; }
+  .pass.last { border-bottom: none; }
+  .pass .lbl { font-size: 8.6pt; font-weight: 600; color: #4b7f96; letter-spacing: 0.3pt; text-transform: uppercase; }
+  .pass .verdict { float: right; font-size: 8.6pt; font-weight: 600; color: #14313f; background: #eef2f5; padding: 1pt 6pt; border-radius: 2pt; }
+  .pass p { margin: 4pt 0 0 0; font-size: 9.4pt; line-height: 1.48; color: #33404a; }
+
+  .footnote {
+    font-size: 9pt; color: #52606d; line-height: 1.5;
+    border-top: 0.75pt solid #d6dade; padding-top: 7pt; margin-top: 14pt;
+  }
+</style>
+</head>
+<body>
+
+<div class="title">Stocker — an AI Investment Team on n8n</div>
+<div class="track">Final project · <b>Track 1 — Financial Automation: a Multi-Agent n8n System</b></div>
+<div class="byline">
+  <span class="fillme">[ Student name(s) &amp; ID(s) — fill in before submission ]</span>
+  &nbsp;&nbsp;·&nbsp;&nbsp; Repository: <b>github.com/gilbarel1/algotrade-project</b>
+  &nbsp;&nbsp;·&nbsp;&nbsp; July 2026
+</div>
+
+<h2>1 · The financial problem</h2>
+
+<p class="lead">
+Forming a view on a stock means synthesizing three unlike sources: price action, news flow, and
+exchange disclosures. Doing that by hand across a watchlist is slow and inconsistent. Doing it with
+a single LLM prompt is fast but untrustworthy — one-shot pipelines invent financial figures, hide
+their uncertainty, and overcommit on thin evidence.
+</p>
+
+<p>
+Tel-Aviv names add specific friction. Coverage splits across Hebrew and English, and TASE
+disclosures live on a bot-protected JavaScript site whose actual figures sit in PDF attachments
+two layers below the page a naive scraper would read.
+</p>
+
+<p>
+<b>What this project solves.</b> Given a watchlist that may mix TA-35 and S&amp;P 500 names, produce
+a justified <b>long / short / hold / avoid</b> recommendation per ticker — with a conviction level,
+a complete reasoning trace, and citations back to every source. Two guarantees hold throughout:
+<b>no financial figure is ever fabricated</b>, and <b>no uncertainty is ever hidden</b>. A failed
+data source lowers conviction; it never becomes a signal.
+</p>
+
+<h2>2 · What was built</h2>
+
+<p>
+A virtual investment team of four AI agents orchestrated by <b>n8n</b>, backed by a local
+<b>FastAPI</b> service that owns all real computation. Three specialists gather independent evidence
+per ticker; a Risk Manager weighs it through a three-pass self-critique and issues the call. Every
+run produces a <b>PDF report</b> with an executive summary, per-ticker pages, and the full
+reasoning trace.
+</p>
+
+<table>
+  <tr>
+    <th style="width: 21%">Agent</th>
+    <th style="width: 30%">Role</th>
+    <th>Key mechanism</th>
+  </tr>
+  <tr>
+    <td class="agent-name">Sentiment<br><span style="font-weight:400;color:#6a737d;font-size:8.6pt">claude-haiku-4.5</span></td>
+    <td>Reads recent news from NewsAPI and RSS, English and Hebrew</td>
+    <td><b>Dual scoring.</b> An LLM and a fine-tuned transformer (FinBERT for English, HeBERT for Hebrew) score every article independently. Their disagreement is itself a reported signal.</td>
+  </tr>
+  <tr>
+    <td class="agent-name">Earnings<br><span style="font-weight:400;color:#6a737d;font-size:8.6pt">grok-4.3</span></td>
+    <td>Reads exchange disclosures — Maya for TASE, SEC EDGAR for US, routed by market</td>
+    <td><b>Self-consistency.</b> Every figure is sampled three times at temperature 0.3 and committed only on a majority vote of verbatim matches. Anything else is marked <code>ambiguous</code>.</td>
+  </tr>
+  <tr>
+    <td class="agent-name">Technical<br><span style="font-weight:400;color:#6a737d;font-size:8.6pt">gemini-2.5-flash-lite</span></td>
+    <td>Narrates RSI, MACD, Bollinger and ATR computed server-side</td>
+    <td>The model narrates pre-computed JSON only. No number in the report originates inside a language model.</td>
+  </tr>
+  <tr>
+    <td class="agent-name">Risk Manager<br><span style="font-weight:400;color:#6a737d;font-size:8.6pt">claude-haiku-4.5, ×3</span></td>
+    <td>Synthesizes the three signals into the final call</td>
+    <td><b>Draft → devil's-advocate critique → final</b>, then a deterministic rubric clamp so a model that breaks the decision rules cannot reach the report.</td>
+  </tr>
+</table>
+
+<p>
+<b>Three entry points</b> share one pipeline. A <b>manual trigger</b> for demos. An <b>hourly
+schedule</b> with a per-market gate — a run at 11:00 Israel time analyzes only TASE names, one at
+20:00 only US names, each market carrying its own calendar, hours, news feeds, earnings source and
+currency. And a <b>chat assistant</b> with a web UI: <i>“what do you think about Teva?”</i> runs the
+real pipeline for <code>TEVA.TA</code> in roughly a minute and answers with the Risk Manager's call.
+The chat agent is deliberately a <b>router, not an analyst</b> — it may only invoke the pipeline and
+relay what comes back, and it declines to produce any figure the tools did not return.
+</p>
+
+<h2>3 · Architecture</h2>
+
+<p>
+<b>Two layers joined by one HTTP boundary.</b> n8n holds the orchestration and every LLM call, and
+contains no machine-learning code. The FastAPI service owns everything needing a real library —
+indicators (<code>pandas-ta</code>), transformer inference, PDF rendering (WeasyPrint over Jinja2),
+and scraping (Playwright for Maya's protected SPA, plain HTTP for EDGAR) — persisting to
+<b>DuckDB</b>: prices, news, earnings, runs, recommendations, costs.
+</p>
+
+<p>
+Each run opens with a run id and the watchlist, fans the three analysis agents out per ticker at
+concurrency 3, runs the Risk Manager's three passes per ticker, harvests real token usage from
+n8n's execution API, renders the PDF, and closes the run.
+</p>
+
+<ul>
+  <li><b>Heavy data never crosses the LLM boundary.</b> Price arrays, article bodies and rendered HTML stay server-side; models see short text and scores.</li>
+  <li><b>Every LLM response is schema-validated.</b> A malformed reply earns one stricter retry, then an explicit degraded result — never a silent fallback.</li>
+  <li><b>Failures degrade, they never crash.</b> Yahoo, NewsAPI, RSS, Maya, EDGAR and the n8n API each fail into a labelled state that the Risk Manager turns into lower conviction.</li>
+  <li><b>Costs are observable.</b> Every call is logged with tokens, dollars and latency; a five-ticker run costs roughly <b>$0.04–0.08</b>.</li>
+  <li>Times are stored in UTC and rendered in Asia/Jerusalem. Secrets live only in a gitignored <code>.env</code>.</li>
+</ul>
+
+<h2>4 · The AI, beyond a baseline pipeline</h2>
+
+<table>
+  <tr>
+    <th style="width: 33%">Technique</th>
+    <th>What it adds</th>
+  </tr>
+  <tr>
+    <td><b>Dual sentiment</b><br><span style="color:#6a737d;font-size:8.8pt">LLM alongside FinBERT / HeBERT</span></td>
+    <td>An independent, non-LLM opinion on every article. Disagreement above a threshold caps conviction at medium and is printed in the report — model conflict becomes information rather than something averaged away.</td>
+  </tr>
+  <tr>
+    <td><b>Self-consistency extraction</b><br><span style="color:#6a737d;font-size:8.8pt">n = 3, temperature 0.3, majority vote</span></td>
+    <td>“Never invent numbers” enforced by construction rather than by instruction. A figure is committed only when repeated samples agree on text present verbatim in the source; everything else prints as <code>ambiguous</code>, visually distinct in the PDF.</td>
+  </tr>
+  <tr>
+    <td><b>Three-pass critique loop</b><br><span style="color:#6a737d;font-size:8.8pt">with a deterministic rubric clamp</span></td>
+    <td>The recommendation visibly stress-tests itself, and all three passes are printed. A mechanical clamp then enforces the decision rubric — and when it overrides the model, the report says so rather than quietly rewriting the model's words.</td>
+  </tr>
+  <tr>
+    <td><b>Versioned few-shot prompts</b><br><span style="color:#6a737d;font-size:8.8pt">with an evaluation harness</span></td>
+    <td>Prompts are files, not workflow internals: version-controlled, reviewable, and scored against hand-labelled fixtures by a single command.</td>
+  </tr>
+  <tr>
+    <td><b>Degraded-agent epistemics</b></td>
+    <td>A failed agent is defined as <i>no information</i>. The prompts state that an empty result caused by a system failure says nothing about the company, and the rubric counts it for neither side while still lowering conviction.</td>
+  </tr>
+</table>
+
+<h2>5 · Results</h2>
+
+<h3>5.1 · Evaluation harness</h3>
+
+<p>
+Scored against hand-labelled fixtures: 30 news items (20 English, 10 Hebrew), 10 disclosures, and
+7 chat-router cases.
+</p>
+
+<table>
+  <tr><th style="width: 38%">Agent</th><th>Result</th></tr>
+  <tr><td>Sentiment — LLM</td><td>accuracy <b>0.90</b> (27 / 30) · MAE 0.12</td></tr>
+  <tr><td>Sentiment — FinBERT / HeBERT</td><td>accuracy <b>0.63</b> (19 / 30) · MAE 0.41</td></tr>
+  <tr><td>Sentiment — agreement</td><td>Pearson r 0.70 (n = 30)</td></tr>
+  <tr><td>Earnings — classifier</td><td>macro-F1 <b>1.00</b> · materiality accuracy 0.90 (n = 10)</td></tr>
+  <tr><td>Earnings — extractor</td><td>precision <b>1.00</b> · recall <b>1.00</b> · <b>ambiguous-when-absent 22 / 22</b></td></tr>
+  <tr><td>Chat router</td><td>refusal 4 / 5 · routing 2 / 2 · no fabrication</td></tr>
+</table>
+
+<p>
+Read honestly, the transformer arm is weaker than the LLM arm largely because <b>HeBERT is a
+general Hebrew sentiment model, not a finance-tuned one</b>. That gap is measured and published
+rather than hidden — and it is precisely why disagreement between the two arms is treated as a
+signal instead of noise. The extractor row is the “never invent numbers” guarantee, measured: every
+figure absent from its source came back <code>ambiguous</code>, 22 times out of 22.
+</p>
+
+<h3>5.2 · Live behaviour, including under failure</h3>
+
+<p>
+A single-ticker chat run completes in about a minute for two to four cents, producing a four-page
+PDF and complete database rows. A mixed watchlist renders one report carrying per-market currencies
+and a market-grouped summary.
+</p>
+
+<div class="callout">
+  <span class="h">Case study — what happens when a data source dies</span>
+  With a rejected news API key the sentiment agent degrades to zero articles. In an early run the
+  critique pass argued that the <i>absence</i> of news for a mega-cap was “itself a material
+  anomaly… both scenarios bearish” — inferring a market signal from an infrastructure failure. This
+  was caught in review and root-caused: the agent's failure status was not machine-readable to the
+  prompts. After the fix, the same ticker's critique instead notes that the system “correctly avoids
+  inventing sentiment signal”, and the final call states that <i>“a degraded agent is neutral by
+  definition… its absence is not a bearish or bullish signal”</i> — while conviction is still
+  lowered. The failure, the diagnosis and the before/after evidence are all in the repository history.
+</div>
+
+<h3>5.3 · The reasoning trace, as printed in the report</h3>
+
+<p>
+Excerpts from one run's three passes for <code>NFLX</code>, after the fix described above. Each pass
+is printed in full on the ticker's page.
+</p>
+
+<div class="trace">
+  <div class="pass">
+    <span class="lbl">1 · Draft</span><span class="verdict">hold · low</span>
+    <p>“Agreement count is 1 of 3: only earnings aligns with a potential direction, while sentiment
+    is degraded (<b>NewsAPI failure provides no signal</b>) and technical is neutral. Per rule 2,
+    one or fewer agents agreeing mandates a ‘hold’ call regardless of conviction cap.”</p>
+  </div>
+  <div class="pass">
+    <span class="lbl">2 · Devil's-advocate critique</span><span class="verdict">counter: hold</span>
+    <p>“MACD below signal line with positive histogram — a subtle bullish inflection the draft
+    dismisses as merely neutral… Agreement count is mechanically applied, but the denominator
+    includes a degraded sentiment agent that contributed zero information. <b>The system correctly
+    avoids inventing sentiment signal</b>, but the true agreement ratio is understated.”</p>
+  </div>
+  <div class="pass last">
+    <span class="lbl">3 · Final decision</span><span class="verdict">hold · low</span>
+    <p>“The critique's technical observations are noted but do not override the mechanical agreement
+    rule… The critique correctly identifies that the degraded sentiment agent weakens the
+    denominator, which legitimately lowers conviction further; however, <b>per the rubric, a degraded
+    agent is neutral by definition and does not constitute evidence of direction — its absence is not
+    a bearish or bullish signal</b>.”</p>
+  </div>
+</div>
+<div class="cap" style="text-align:left">
+  Note how the critique attacks the draft on its own evidence, and the final answers each objection
+  explicitly rather than restating the draft. Full report pages and screenshots are in the repository.
+</div>
+
+<h2>6 · Risks and caveats</h2>
+
+<ul>
+  <li><b>The critique loop reduces overconfidence; it does not guarantee correctness.</b> It is a structured reasoning aid, not a financial-validity guarantee. The report is educational and not investment advice, and its footer says so.</li>
+  <li><b>No live execution and no return measurement.</b> The system argues positions; it never checks whether they would have made money. A backtest is the natural next step.</li>
+  <li><b>Maya scraping is best-effort.</b> A protected JavaScript site rendered headless: layout changes can break the harvest. Figures depend on a PDF attachment two layers down, so a scanned file or dead link yields <code>ambiguous</code> figures — never guessed ones.</li>
+  <li><b>EDGAR extraction is a bounded text excerpt, not a structured parse.</b> A 10-Q's tables flatten badly into text, so press-release exhibits are preferred explicitly by the selection logic.</li>
+  <li><b>News coverage is uneven.</b> TA-35 mid-caps are thinly covered, and auto-derived search terms fail where a company's registered name differs from its press name (“Alphabet” versus “Google”, hand-curated). The free news tier binds on a large watchlist.</li>
+  <li><b>A model swap is not a no-op.</b> Models clear schema validation at different rates, and the retry path is a different branch of the graph — swapping the earnings model surfaced a latent fan-in bug the previous model had masked.</li>
+  <li><b>Two known open items.</b> The agreement rule still counts a degraded agent in its three-agent denominator, so “1 of 3” may effectively be “1 of 2 measurable” — flagged by the system's own critique pass. And one chat-router refusal case out of five still fails.</li>
+</ul>
+
+<h2>7 · Future development</h2>
+
+<ul>
+  <li><b>Backtest the recommendation stream</b> against realized returns — turning rationale quality into measured alpha, net of costs.</li>
+  <li><b>Delivery channels.</b> E-mail and Telegram are each a single additional n8n node; the report step is already structured for them.</li>
+  <li><b>Scale the watchlist</b> to the full TA-35 and S&amp;P 500. The per-market architecture supports it today; a paid news tier is the binding constraint.</li>
+  <li><b>Rubric refinements.</b> Resolve the degraded-denominator question, and consider a stronger Risk Manager model — a one-field change, with the cost table as arbiter.</li>
+  <li><b>OCR fallback</b> for scanned disclosure PDFs, currently an honest <code>ambiguous</code>.</li>
+</ul>
+
+<div class="footnote">
+  <b>Running it.</b> <code>npm run setup</code>, add API keys to <code>.env</code>, then
+  <code>npm run dev</code> to start the quant service, n8n and the chat UI together; the six
+  workflows are imported once through the n8n editor. Quick-start, evaluation reproduction and
+  wiring details are in <code>README.md</code>; the complete technical design in
+  <code>docs/design.md</code>; run walk-throughs in <code>docs/results.md</code>; and the demo
+  outline in <code>docs/demo_script.md</code>.
+</div>
+
+</body>
+</html>
