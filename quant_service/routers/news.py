@@ -166,7 +166,11 @@ def news_fetch(req: NewsFetchRequest):
             )
         )
     except newsapi.NewsAPIError as exc:
-        errors.append(f"NewsAPI: {exc}")
+        # Most of these messages already name the source ("NewsAPI returned 401 …"),
+        # so prefixing unconditionally produced "NewsAPI: NewsAPI returned 401" in a
+        # summary the report prints verbatim. Only label the ones that don't.
+        reason = str(exc)
+        errors.append(reason if reason.lower().startswith("newsapi") else f"NewsAPI: {reason}")
 
     # RSS groups of THIS ticker's market (§4.4): a TASE name pulls en_il+he_il
     # (EN primary, HE fallback), a US name pulls en_us — never the other market's
