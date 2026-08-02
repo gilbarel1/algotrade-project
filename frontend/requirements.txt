@@ -1,6 +1,10 @@
 # Chat front end (§6.5). Deliberately tiny: this service serves a static page and
 # proxies to the n8n chat webhook — it does no ML, no data work, no LLM calls, so it
 # shares none of the quant service's heavy dependencies.
-fastapi>=0.110
-uvicorn>=0.29
-httpx>=0.27
+#
+# Pinned to the tested versions, and kept identical to the matching lines in
+# quant_service/requirements.txt so one shared virtualenv satisfies both services
+# without a resolver conflict.
+fastapi==0.139.0
+uvicorn==0.50.2
+httpx==0.28.1
