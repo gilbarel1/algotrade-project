@@ -1,5 +1,7 @@
 # AI Investment Team
 
+[![CI](https://github.com/gilbarel1/algotrade-project/actions/workflows/ci.yml/badge.svg)](https://github.com/gilbarel1/algotrade-project/actions/workflows/ci.yml)
+
 An **n8n multi-agent system that turns a stock watchlist into a justified, written investment
 recommendation** — delivered as a PDF report. Four specialist agents — **Sentiment, Earnings,
 Technical, and Risk Manager** — each analyze a ticker independently; a coordinating workflow
