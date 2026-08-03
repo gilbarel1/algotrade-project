@@ -40,11 +40,11 @@ npm run smoke
 ```
 
 **Pass:** `All endpoints OK.` This exercises every §5 endpoint with real data — OHLC and
-indicators from Yahoo, FinBERT/HeBERT scoring, news and earnings fetching, the deterministic
+indicators from Yahoo, FinBERT/DictaBERT scoring, news and earnings fetching, the deterministic
 rubric facts, `/validate` accepting valid payloads *and rejecting malformed ones*, PDF
 rendering, and the orchestration writes to `runs` / `recommendations` / `costs`.
 
-> The first run is slow (tens of seconds): it downloads FinBERT + HeBERT into `HF_HOME`.
+> The first run is slow (tens of seconds): it downloads FinBERT + DictaBERT into `HF_HOME`.
 > Later runs reuse the cache.
 
 **Per-market schedule gate** (§6.1) — the one piece the smoke test cannot reach, because it

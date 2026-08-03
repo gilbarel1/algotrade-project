@@ -19,7 +19,9 @@ from nlp import finbert, hebert, language_detect
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-_SCORERS = {"en": ("finbert", finbert), "he": ("hebert", hebert)}
+# The tag names the CHECKPOINT that scored the item, so it follows a model swap
+# (§3.1): the `hebert` module is the Hebrew scorer, now DictaBERT.
+_SCORERS = {"en": ("finbert", finbert), "he": ("dictabert", hebert)}
 
 
 class SentimentItem(BaseModel):
@@ -70,7 +72,7 @@ def sentiment(req: SentimentRequest):
     scored = [s for s in scores if s is not None]
     summary = (
         f"{len(scored)} items scored: "
-        f"{counts['en']} EN (finbert), {counts['he']} HE (hebert)."
+        f"{counts['en']} EN (finbert), {counts['he']} HE (dictabert)."
     )
     if degraded_reasons:
         summary = f"degraded: {'; '.join(degraded_reasons)} — {summary}"

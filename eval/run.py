@@ -9,7 +9,7 @@ the README (§9.3).
 Five arms map to the §9.2 table:
 
     Sentiment (LLM)            Haiku 4.5 over /validate boundary  -> label acc, score MAE
-    Sentiment (FinBERT/HeBERT) POST /sentiment                    -> label acc, score MAE
+    Sentiment (FinBERT/DictaBERT) POST /sentiment                 -> label acc per language
     Sentiment (agreement)      Pearson r between the two score sets
     Earnings (classifier)      Grok temp 0                        -> macro-F1(kind), materiality acc
     Earnings (extractor)       Grok temp 0.3 x3 + majority vote   -> precision, recall
@@ -25,7 +25,7 @@ Run from the repo root with the service up:
 
     npm run eval                 # loads .env, uses the venv
     python -m eval.run           # requires the venv python + service running
-    python -m eval.run --no-llm  # FinBERT/HeBERT arm only (no OpenRouter key needed)
+    python -m eval.run --no-llm  # transformer arm only (no OpenRouter key needed)
 """
 
 from __future__ import annotations
@@ -134,7 +134,7 @@ class Services:
             return False
 
     def score_sentiment(self, items: List[dict]) -> Dict[str, float]:
-        """POST /sentiment (FinBERT/HeBERT). Returns id -> score."""
+        """POST /sentiment (FinBERT/DictaBERT). Returns id -> score."""
         payload = {"items": [{"id": it["id"], "text": it["text"], "language": it.get("language")} for it in items]}
         r = self.client.post(f"{self.base_url}/sentiment", json=payload)
         r.raise_for_status()
@@ -400,12 +400,29 @@ def run_sentiment_model(svc: Services, data: List[dict], bull: float, bear: floa
     scored = [d for d in data if d["id"] in scores]
     correct = sum(1 for d in scored if label_from_score(scores[d["id"]], bull, bear) == d["label"])
     mae = sum(abs(scores[d["id"]] - d["score"]) for d in scored) / len(scored) if scored else None
+
+    # Per language, because this arm is TWO models and one aggregate hides which is
+    # carrying the result (§9.2). English goes to FinBERT, Hebrew to DictaBERT, and
+    # they do not perform alike — reporting only the mean made the English arm look
+    # weak and hid that the Hebrew one was, at one point, not discriminating at all.
+    by_language: Dict[str, dict] = {}
+    for lang in sorted({d.get("language", "?") for d in scored}):
+        sub = [d for d in scored if d.get("language", "?") == lang]
+        hits = sum(1 for d in sub if label_from_score(scores[d["id"]], bull, bear) == d["label"])
+        by_language[lang] = {
+            "n": len(sub),
+            "correct": hits,
+            "accuracy": hits / len(sub) if sub else None,
+            "mae": sum(abs(scores[d["id"]] - d["score"]) for d in sub) / len(sub) if sub else None,
+        }
+
     return {
         "scores": scores,
         "n": len(scored),
         "accuracy": correct / len(scored) if scored else None,
         "correct": correct,
         "mae": mae,
+        "by_language": by_language,
     }
 
 
@@ -654,7 +671,7 @@ def build_summary(eval_id: str, sent: List[dict], earn: List[dict], results: dic
         f"   Chat: {(results.get('chat_refusal') or {}).get('n', 0)} router cases"
     )
     L.append("")
-    L.append(f"{'Agent':<28}{'Dataset':<20}Metrics")
+    L.append(f"{'Agent':<30}{'Dataset':<20}Metrics")
     L.append("-" * 78)
 
     sm = results.get("sentiment_model")
@@ -665,7 +682,8 @@ def build_summary(eval_id: str, sent: List[dict], earn: List[dict], results: dic
     skip = results.get("skip_llm", "unavailable")
 
     def row(agent: str, dataset: str, metrics: str) -> str:
-        return f"{agent:<28}{dataset:<20}{metrics}"
+        # 30 wide: "Sentiment (FinBERT/DictaBERT)" is 29 chars and ran into the next column.
+        return f"{agent:<30}{dataset:<20}{metrics}"
 
     if sl is None:
         L.append(row("Sentiment (LLM)", "sentiment_labeled", f"skipped - {skip}"))
@@ -679,15 +697,29 @@ def build_summary(eval_id: str, sent: List[dict], earn: List[dict], results: dic
             )
         )
     if sm is None:
-        L.append(row("Sentiment (FinBERT/HeBERT)", "sentiment_labeled", "skipped - service unavailable"))
+        L.append(
+            row("Sentiment (FinBERT/DictaBERT)", "sentiment_labeled", "skipped - service unavailable")
+        )
     else:
         L.append(
             row(
-                "Sentiment (FinBERT/HeBERT)",
+                "Sentiment (FinBERT/DictaBERT)",
                 "sentiment_labeled",
                 f"accuracy {_fmt(sm['accuracy'])} ({sm['correct']}/{sm['n']}) | MAE {_fmt(sm['mae'])}",
             )
         )
+        # The two languages run different checkpoints; the mean of the two says
+        # little about either (§9.2).
+        _MODEL_OF = {"en": "finbert", "he": "dictabert"}
+        for lang, st in sorted((sm.get("by_language") or {}).items()):
+            L.append(
+                row(
+                    f"  └ {lang}",
+                    _MODEL_OF.get(lang, lang),
+                    f"accuracy {_fmt(st['accuracy'])} ({st['correct']}/{st['n']}) "
+                    f"| MAE {_fmt(st['mae'])}",
+                )
+            )
     if ag is None:
         L.append(row("Sentiment (agreement)", "sentiment_labeled", "n/a - needs both score sets"))
     else:
@@ -756,7 +788,7 @@ def main() -> int:
     import os
 
     parser = argparse.ArgumentParser(description="Evaluation harness (§9).")
-    parser.add_argument("--no-llm", action="store_true", help="run only the FinBERT/HeBERT arm (no OpenRouter)")
+    parser.add_argument("--no-llm", action="store_true", help="run only the FinBERT/DictaBERT arm (no OpenRouter)")
     args = parser.parse_args()
 
     load_dotenv_into(os.environ)
@@ -787,7 +819,7 @@ def main() -> int:
         if not service_up:
             print(
                 f"WARNING: quant service not reachable at {base_url}; "
-                "FinBERT/HeBERT arm and LLM validation will be skipped.",
+                "FinBERT/DictaBERT arm and LLM validation will be skipped.",
                 file=sys.stderr,
             )
 

@@ -205,7 +205,7 @@ search_terms:
 # the other market's local press. NewsAPI covers EN separately for both markets.
 #
 # GROUP NAMING IS LOAD-BEARING: the part before the underscore is the feed's
-# LANGUAGE (`en_il`/`en_us` -> en, `he_il` -> he) and routes FinBERT vs HeBERT
+# LANGUAGE (`en_il`/`en_us` -> en, `he_il` -> he) and routes FinBERT vs DictaBERT
 # downstream (§3.1); the part after is the region. routers/news.py derives the
 # language by splitting on "_", so a new group must follow `<lang>_<region>`.
 # IL URLs verified live 2026-07-05; US URLs verified live 2026-07-20.

@@ -124,7 +124,7 @@ Each step maps to sections of `docs/design.md`. Build in the order listed and do
 
 - Python service: **FastAPI + uvicorn**, `uvicorn app:app --port 8000`.
 - Store: **DuckDB** (`quant_service/store.duckdb`).
-- Indicators: `pandas-ta`. NLP: Hugging Face `transformers` for FinBERT (`ProsusAI/finbert`) and HeBERT (`avichr/heBERT_sentiment_analysis`). PDF: **WeasyPrint** over **Jinja2**. Charts: matplotlib PNG.
+- Indicators: `pandas-ta`. NLP: Hugging Face `transformers` for FinBERT (`ProsusAI/finbert`) and DictaBERT (`dicta-il/dictabert-sentiment`; replaced HeBERT, see design §3.1). PDF: **WeasyPrint** over **Jinja2**. Charts: matplotlib PNG.
 - Orchestration: **self-hosted n8n 2.x**. LLM access via **OpenRouter** (models per §7).
 - In Step 0, create a `README.md` (or `Makefile`) documenting the exact run/test commands so the reviewer can verify each step without guessing.
 - Small focused commits per step; a runnable test or script per endpoint as it becomes real.

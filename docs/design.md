@@ -4,7 +4,7 @@
 
 An automated workflow simulating a virtual investment team. Four specialist agents — Sentiment, Earnings, Technical, and Risk Manager — independently analyze a watchlist of TA-35 names; a coordinating workflow synthesizes their conclusions, runs a deliberate critique pass, and produces a justified buy / hold / sell recommendation as a detailed PDF report saved to disk.
 
-Two design choices distinguish the system from a baseline LLM-only pipeline. First, sentiment is scored twice — once by a language model and once by a fine-tuned transformer (FinBERT for English, HeBERT for Hebrew) — and disagreements between the two are surfaced in the report rather than hidden. Second, the Risk Manager runs a three-stage critique loop (draft → devil's-advocate critique → final decision) so the rationale visibly stress-tests itself instead of being a single LLM emission. Number extraction from earnings disclosures uses self-consistency sampling to enforce a strict "do not invent numbers" guarantee.
+Two design choices distinguish the system from a baseline LLM-only pipeline. First, sentiment is scored twice — once by a language model and once by a fine-tuned transformer (FinBERT for English, DictaBERT for Hebrew) — and disagreements between the two are surfaced in the report rather than hidden. Second, the Risk Manager runs a three-stage critique loop (draft → devil's-advocate critique → final decision) so the rationale visibly stress-tests itself instead of being a single LLM emission. Number extraction from earnings disclosures uses self-consistency sampling to enforce a strict "do not invent numbers" guarantee.
 
 The system runs on self-hosted n8n with language-model access via OpenRouter; computation that does not fit n8n is delegated to a small local Python service. The workflow runs in two modes: manually triggered for the demo, and on a schedule during TASE trading hours.
 
@@ -28,14 +28,14 @@ The system runs on self-hosted n8n with language-model access via OpenRouter; co
 Two layers joined by one HTTP boundary:
 
 1. **Orchestration (n8n + OpenRouter).** A trigger fans out the four agent sub-workflows over the watchlist, the Risk Manager consumes their outputs through a three-stage critique loop, and the report is rendered.
-2. **Quant service (Python + FastAPI).** Computes technical indicators on cached OHLC, serves a sentiment endpoint backed by a fine-tuned transformer (FinBERT/HeBERT), and generates the PDF. Everything that needs a real library (`pandas-ta`, Hugging Face Transformers, WeasyPrint) lives here.
+2. **Quant service (Python + FastAPI).** Computes technical indicators on cached OHLC, serves a sentiment endpoint backed by a fine-tuned transformer (FinBERT/DictaBERT), and generates the PDF. Everything that needs a real library (`pandas-ta`, Hugging Face Transformers, WeasyPrint) lives here.
 
 ```mermaid
 flowchart TD
     T1[Manual Trigger] --> ORC[Orchestrator]
     T2[Schedule Trigger<br/>hourly, TASE hours] --> ORC
 
-    ORC -->|fan out per ticker| SA[Sentiment Agent<br/>claude-haiku-4.5 + FinBERT/HeBERT]
+    ORC -->|fan out per ticker| SA[Sentiment Agent<br/>claude-haiku-4.5 + FinBERT/DictaBERT]
     ORC -->|fan out per ticker| EA[Earnings Agent<br/>grok-4.3 + self-consistency]
     ORC -->|fan out per ticker| TA[Technical Agent<br/>gemini-2.5-flash-lite]
 
@@ -76,7 +76,8 @@ Each agent is an n8n sub-workflow. Sentiment, Earnings, and Technical run in par
 - **Role.** Read news headlines and summaries from the last two hours about a given ticker; score sentiment two ways and surface disagreements.
 - **Two independent scorers:**
   - **`llm_sentiment`** — Haiku 4.5 reads each article (translating Hebrew inline when needed) and returns a `-1..+1` score plus per-article reasoning. Prompt is **few-shot**, loaded from `prompts/sentiment_examples.jsonl` (labeled examples covering positive/negative/neutral and an English/Hebrew mix).
-  - **`model_sentiment`** — the quant service's `/sentiment` endpoint. English text is scored by `ProsusAI/finbert`; Hebrew text by `avichr/heBERT_sentiment_analysis`. Outputs `-1..+1` per article and an aggregated score.
+  - **`model_sentiment`** — the quant service's `/sentiment` endpoint. English text is scored by `ProsusAI/finbert`; Hebrew text by `dicta-il/dictabert-sentiment` (CC-BY-4.0). Outputs `-1..+1` per article and an aggregated score.
+  - **Why DictaBERT rather than HeBERT for Hebrew.** The original choice, `avichr/heBERT_sentiment_analysis` (2020), was measured against the §9.1 labeled set and found to be **unusable on financial Hebrew**: it returned `neutral` for **10 of 10** items, with neutral probability between 0.833 and 0.998 — including *"record quarterly orders, raises annual guidance"* (0.998 neutral) and *"heavy quarterly loss, the stock plunged"* (0.957). Its 0.30 accuracy was simply the base rate of genuinely-neutral items, not discrimination. Two rescue attempts failed before the model was replaced: re-normalising polarity over the polar classes only, which *degraded* the overall score to 0.53 by turning that residual mass into confident wrong calls, and a threshold sweep from ±0.1 to ±0.6, which moved nothing. `dicta-il/dictabert-sentiment` scores **0.70** on the same items (MAE 0.32 vs 0.39) — every negative and every neutral correct, missing only positives, which it reads as neutral. Measured on 10 Hebrew items, so the size of the gap is better evidence than its precise value.
 - **Agreement metric.** `|llm − model|` per article; aggregate disagreement is the mean. High disagreement is **not** a failure — it is a feature reported to the Risk Manager and shown in the PDF.
 - **Sources.** NewsAPI (English); Globes/Reuters/Bloomberg/Calcalist-English RSS; Ynet/Calcalist Hebrew RSS as fallback. Fetching, §4.3 cleaning, and `news`-table persistence run server-side in the quant service (`/news/fetch`, `/news/store`) so n8n moves only compact, pre-cleaned items.
 - **Search terms, and the derived fallback.** A ticker is not a searchable string (§4.4), so news is queried by the company's name from `search_terms`. Hand-tuned entries always win. When a ticker has none *and* its market sets `search_terms_fallback: sec_registry` (§4.4 — `us` does; `tase` cannot, since Israeli issuers are not SEC registrants and their Hebrew terms are underivable), the term is derived from the SEC registrant name already cached by the EDGAR path — `"NVIDIA CORP"` → `"NVIDIA"`. This exists because the chat assistant (§6.5) accepts any S&P 500 name ad-hoc, and without it every name the config has never seen returns no coverage, degrading Sentiment and capping conviction at `medium` (§3.4) for companies that are in fact heavily covered. A derived term is **weaker than a hand-tuned one and treated as such**: NewsAPI searches the whole web, so a bare brand name pulls in software releases sharing it (measured: `"NVIDIA"` → 48 items led by PyPI package listings; `"MICROSOFT"` → 42 led by Azure SDK releases). Precision is restored by restricting the **publisher**, not the wording: a market may declare `newsapi_domains` (§4.4), an allowlist of finance outlets, and `us` does. Narrowing the *query* instead was tried and reverted — NewsAPI's `searchIn` then demands both the company and a finance keyword in the title/description, and `"Apple Inc"` fell to 0 items while `"Alphabet" OR "Google"` fell to 1. With the allowlist those same queries return 33 and 28 items, all equity coverage. The allowlist applies to hand-tuned and derived terms alike; `tase` declares none, so Israeli coverage keeps its unrestricted behavior. The response summary states when a term was derived.
@@ -219,7 +220,7 @@ inferred from prose.
 | Earnings disclosures (TASE) | `maya.tase.co.il/en/reports/companies` (JS SPA, rendered via Playwright headless Chromium server-side); figures come from the disclosure's **PDF attachment** on `mayafiles.tase.co.il` (§3.2), text-extracted with `pypdf` | Free, English where available; best-effort (§13) | Hebrew Maya + LLM translation                           |
 | Earnings disclosures (US)   | SEC EDGAR — `data.sec.gov/submissions/CIK##########.json` for recent filings; ticker→CIK via `company_tickers.json`; excerpt from the filing's EX-99.\* press-release exhibit, falling back to its **primary document** when there is none (a 10-Q/10-K carries its figures there, not in an exhibit) | Free JSON API; requires a declared `User-Agent` (contact email); ~10 req/s limit; plain `httpx`, no Playwright | — (degrades to `ambiguous`, §13)                        |
 | Market context          | Yahoo Finance for`^TA125.TA`, `^GSPC`, `^VIX`                              | Free                                       | —                                                      |
-| Fine-tuned sentiment    | Hugging Face`ProsusAI/finbert` (EN), `avichr/heBERT_sentiment_analysis` (HE) | Local inference via`transformers`        | —                                                      |
+| Fine-tuned sentiment    | Hugging Face`ProsusAI/finbert` (EN), `dicta-il/dictabert-sentiment` (HE, CC-BY-4.0) | Local inference via`transformers`        | —                                                      |
 
 ### 4.2 Caching and persistence
 
@@ -383,7 +384,7 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
 | -------------------- | ---------------------------------------------------------------------------- |
 | `POST /ohlc`       | Cached daily/intraday OHLC for a symbol                                      |
 | `POST /indicators` | RSI, MACD, Bollinger, ATR from cached OHLC                                   |
-| `POST /sentiment`  | FinBERT/HeBERT score for a batch of texts (auto-routes by detected language) |
+| `POST /sentiment`  | FinBERT/DictaBERT score for a batch of texts (auto-routes by detected language) |
 | `POST /news/fetch` | Fetch + clean recent news for a ticker (NewsAPI EN + the RSS groups of the ticker's market — `markets[<market>].rss_feed_groups`, §4.4) and return compact items plus the few-shot examples; keeps NewsAPI/RSS access and §4.3 cleaning server-side so n8n never fetches or parses raw feeds. Search terms come from `search_terms`, falling back to the SEC registrant name for markets with `search_terms_fallback: sec_registry` (§3.1, §4.4) |
 | `POST /news/store` | Upsert per-article dual-sentiment scores into the `news` table (§4.2); n8n cannot write DuckDB directly |
 | `POST /earnings/fetch` | Fetch + clean recent disclosures for a ticker, **routed by the ticker's market (§4.4)** and echoing that routing back as `market`, `source` and a human-readable `source_label` (`TASE (Maya)` \| `SEC EDGAR`) so the Earnings Agent can name its source in prompts and summaries without re-deriving the market: Maya for `tase` (EN primary, HE fallback; Playwright headless Chromium), SEC EDGAR for `us` (`httpx`; `url` points at the EDGAR filing index). The response shape is identical for both sources, so the Earnings Agent sub-workflow is market-agnostic. Returns compact items **ranked by relevance (§3.2), the top `earnings_candidates` each with a bounded text excerpt extracted from that disclosure's PDF attachment — the only layer carrying financial figures** — plus the few-shot examples; keeps SPA rendering, bot-protection handling, PDF text extraction, ranking, and §4.3 cleaning server-side so n8n never touches raw pages or PDFs |
@@ -415,8 +416,8 @@ Local FastAPI app (`uvicorn app:app --port 8000`). All responses small and pre-s
 { "items":[{"id":"a1","text":"Teva beats Q1 estimates …","language":"en"},
            {"id":"a2","text":"דיווח רבעוני: …","language":"he"}] }
 { "scores":[{"id":"a1","score":0.62,"model":"finbert"},
-             {"id":"a2","score":-0.18,"model":"hebert"}],
-  "summary":"2 items scored: 1 EN (finbert), 1 HE (hebert)." }
+             {"id":"a2","score":-0.18,"model":"dictabert"}],
+  "summary":"2 items scored: 1 EN (finbert), 1 HE (dictabert)." }
 
 // POST /news/fetch
 { "ticker":"TEVA.TA", "window_minutes":120 }
@@ -639,7 +640,7 @@ The system intentionally combines four AI techniques beyond baseline LLM calls. 
 
 | Technique                                                               | Where                                                        | What it adds                                                                               |
 | ----------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| **Fine-tuned domain transformers** (FinBERT EN, HeBERT HE)        | `/sentiment` endpoint, used by the Sentiment Agent (§3.1) | Independent sentiment signal alongside the LLM; disagreement becomes a first-class feature |
+| **Fine-tuned domain transformers** (FinBERT EN, DictaBERT HE)        | `/sentiment` endpoint, used by the Sentiment Agent (§3.1) | Independent sentiment signal alongside the LLM; disagreement becomes a first-class feature |
 | **Few-shot prompting from a labeled JSONL**                       | Sentiment + Earnings agents                                  | Visible, version-controlled, evaluable prompt engineering                                  |
 | **Self-consistency sampling** (n=3, temperature=0.3)              | Earnings number extraction (§3.2)                           | Enforces "do not invent numbers" by construction, not by instruction                       |
 | **Multi-pass critique loop** (draft → devil's advocate → final) | Risk Manager (§3.4)                                         | Visibly audits its own reasoning; reduces overconfident calls                              |
@@ -699,7 +700,7 @@ A small evaluation harness ships with the system; it prints a one-page summary o
 | Agent                      | Dataset           | Metrics                                                                           |
 | -------------------------- | ----------------- | --------------------------------------------------------------------------------- |
 | Sentiment (LLM)            | sentiment_labeled | Accuracy on label, MAE on numeric score                                           |
-| Sentiment (FinBERT/HeBERT) | sentiment_labeled | Accuracy on label, MAE on numeric score                                           |
+| Sentiment (FinBERT/DictaBERT) | sentiment_labeled | Accuracy on label **reported per language**, MAE on numeric score                                           |
 | Sentiment (agreement)      | sentiment_labeled | Correlation between LLM and model scores                                          |
 | Earnings (classifier)      | earnings_labeled  | F1 on`kind`, accuracy on `materiality`                                        |
 | Earnings (extractor)       | earnings_labeled  | Field-level precision/recall (numbers correct when present, "ambiguous" when not) |
@@ -730,7 +731,7 @@ n8n-investment-team/
 │   ├── routers/ {ohlc,indicators,sentiment,news,earnings,report,validate,riskmanager,runs,costs}.py  # news = /news/fetch + /news/store; earnings = /earnings/fetch + /earnings/store; riskmanager = /riskmanager/context (§3.4 prompts + rubric + deterministic facts); runs = /runs/start + /runs/finish + /recommendations/store (§6.1 orchestration writes); costs = /costs/harvest (§9.4)
 │   ├── data/ {markets.py, yahoo.py, newsapi.py, maya.py, edgar.py, rss.py, news_store.py, earnings_store.py, run_store.py, textclean.py, tls.py, cache.py, ingest.py}  # markets = symbol→market, market properties, session gate + the single config/universe.yaml reader (§4.4, §6.1); ingest = OHLC pull/clean CLI (python -m data.ingest); news_store/earnings_store/run_store = table upserts (run_store = runs + recommendations); textclean = shared §4.3 text cleaning + term matching; maya = Playwright scraper + PDF-attachment text extraction (§3.2, pypdf); edgar = SEC EDGAR US earnings source (§3.2, §4.1 — httpx, no Playwright); tls = OS-trust SSL context for httpx
 │   ├── indicators/ {calc.py}  # pandas-ta computation behind /indicators (§3.3, §5)
-│   ├── nlp/  {finbert.py, hebert.py, language_detect.py}
+│   ├── nlp/  {finbert.py, hebert.py, language_detect.py}  # hebert.py = the Hebrew scorer (DictaBERT since §3.1)
 │   ├── pdf/  {render.py, charts.py}
 │   ├── schemas/ {sentiment.py, earnings.py, technical.py, risk_manager.py}  # Pydantic
 │   ├── ops/  {cost_log.py, cost_report.py, n8n_api.py}  # cost_log = §7 pricing + costs upsert; n8n_api = read-only client for n8n's execution API (token usage, §9.4)
@@ -803,7 +804,7 @@ n8n itself must be started with `QUANT_SERVICE_URL` in its environment **and** `
 **Milestone B — Three analysis agents.**
 
 - **B1 Technical Agent** (HTTP-only).
-- **B2 Sentiment Agent** with dual scoring (LLM + FinBERT/HeBERT), few-shot prompts, Pydantic validation.
+- **B2 Sentiment Agent** with dual scoring (LLM + FinBERT/DictaBERT), few-shot prompts, Pydantic validation.
 - **B3 Earnings Agent** with Maya EN/HE scraping, self-consistency sampling for numbers, Pydantic validation.
 
 **Milestone C — Risk Manager and orchestration.** The three-stage critique loop (§3.4); orchestrator fan-out across the watchlist; `recommendations` table populated with all three passes.
@@ -819,7 +820,7 @@ n8n itself must be started with `QUANT_SERVICE_URL` in its environment **and** `
 The grader's rubric explicitly rewards "understanding of solution limitations." Stating them here so the implementation does not paper over them:
 
 - **News coverage of TA-35 mid-caps is patchy** outside the largest names. Sentiment for a sparsely-covered ticker will legitimately be thin; the report shows article counts and never pads.
-- **HeBERT is a general Hebrew sentiment model, not finance-specific.** Performance on financial-news Hebrew is worse than FinBERT on financial-news English; the evaluation harness measures this rather than glossing it.
+- **The Hebrew arm is still weaker than the English one, and no Hebrew model here is finance-tuned.** DictaBERT scores 0.70 on the labeled Hebrew items against FinBERT's 0.80 on English, and its misses are one-sided: it reads positive financial news as neutral (3 of 4), while getting every negative and every neutral right. So Hebrew coverage is more likely to *understate* good news than to invent bad news — a conservative failure, but a real skew. The harness measures this per language rather than hiding it inside one aggregate number, and the §3.1 note records what the previous model (HeBERT) did and why it was replaced. A genuinely finance-tuned Hebrew model would be the fix; none is published that we could find.
 - **Maya scraping is best-effort.** The site is a JavaScript SPA behind bot protection, so it is rendered server-side in a headless browser (Playwright Chromium); layout changes or a bot-block can still break the harvest. The fallback is widening to the Hebrew page, which loses some structural fields. The earnings agent will mark fields `ambiguous` — or degrade to "no recent disclosure" — rather than guess.
 - **Financial figures depend on a PDF attachment, two layers below the report page** (§3.2). The disclosure page itself carries no figures, so the excerpt is extracted from the attached PDF. That adds two failure modes the report surfaces honestly rather than hiding: a PDF that is a scan (no text layer) or an unreachable attachment yields `ambiguous` figures despite a successfully classified disclosure, and `mayafiles` URL-pattern changes would break extraction while leaving classification intact.
 - **EDGAR excerpts come from 8-K press-release exhibits (EX-99.\*), whose formatting varies wildly** between issuers and filing types. Extraction is a bounded text excerpt, not a structured parse, so a figure that does not appear verbatim in the exhibit falls back to `ambiguous` exactly as with a Maya PDF — safe, but possibly thin for some issuers. The primary-document fallback (§4.1) is thinner still: a 10-Q's figures sit in iXBRL statement *tables*, which flatten into label/number runs when reduced to text, so a periodic report is a materially worse extraction source than the press release an 8-K attaches.

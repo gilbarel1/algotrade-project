@@ -44,7 +44,7 @@ The front end must report `"webhook_configured": true`. All six n8n workflows mu
 (the four agents first, then the orchestrator, then the chat assistant — n8n refuses otherwise).
 
 **3 · Pre-warm.** Run one throwaway chat query before recording. The first `/sentiment` call loads
-FinBERT + HeBERT (tens of seconds) and the first Maya scrape is uncached — you do not want either
+FinBERT + DictaBERT (tens of seconds) and the first Maya scrape is uncached — you do not want either
 on camera.
 
 **4 · Have a fallback report open in a background tab**, from `docs/results.md` or a recent
@@ -129,7 +129,7 @@ we'll look at now."
 **Point at:** the **Sentiment** panel.
 
 **Variant A — say:** "Every headline is scored twice: once by an LLM, once by a fine-tuned
-transformer — FinBERT for English, HeBERT for Hebrew. Here they disagree" *(read the two scores and
+transformer — FinBERT for English, DictaBERT for Hebrew. Here they disagree" *(read the two scores and
 the disagreement value off the screen)*. "We don't average that away. Above a threshold it caps the
 risk manager's conviction, and the report shows the split."
 
@@ -190,7 +190,7 @@ five-ticker run is four to eight cents."
 
 **Then show the evaluation table** (README or `docs/results.md`).
 
-**Say:** "Every agent is scored against hand-labeled data — including that HeBERT is our weakest arm
+**Say:** "Every agent is scored against hand-labeled data — including that the Hebrew arm is our weakest
 at 0.63 against the LLM's 0.90. We measure the weakness instead of hiding it."
 
 **Must be visible:** per-agent cost rows, and the eval table.

@@ -121,7 +121,7 @@ free-tier cap.
 Flow (§3.1): `POST /news/fetch` (NewsAPI EN + Globes/Ynet RSS EN/HE, cleaned
 server-side, returns items **and** the few-shot examples) → branch:
 
-- **Model scorer** — `POST /sentiment` (FinBERT for EN, HeBERT for HE).
+- **Model scorer** — `POST /sentiment` (FinBERT for EN, DictaBERT for HE).
 - **LLM scorer** — Claude Haiku 4.5 (temperature 0), few-shot from the fetch
   response, scores each headline `-1..+1` → `POST /validate` (agent
   `"sentiment"`, `schemas/sentiment.py`) → on invalid: one stricter retry → on
