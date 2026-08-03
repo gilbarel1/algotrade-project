@@ -12,7 +12,7 @@ and **S&P 500 (US)** names in one list.
 Two things set it apart from a single-prompt LLM pipeline:
 
 1. **Dual sentiment** — every headline is scored twice: by an LLM *and* by a fine-tuned
-   transformer (FinBERT for English, HeBERT for Hebrew). When they disagree, the report shows the
+   transformer (FinBERT for English, DictaBERT for Hebrew). When they disagree, the report shows the
    split instead of hiding it.
 2. **A self-critiquing Risk Manager** — a *draft → devil's-advocate critique → final* loop that
    stress-tests its own recommendation. All three passes are printed in the report.
@@ -50,7 +50,7 @@ Two layers joined by one HTTP boundary:
 - **n8n orchestration** runs the workflows and makes every LLM call (via **OpenRouter**). It holds
   **no machine-learning code**.
 - **A local FastAPI "quant service"** does everything that needs a real library — technical
-  indicators (`pandas-ta`), transformer sentiment (FinBERT/HeBERT), PDF rendering (WeasyPrint) —
+  indicators (`pandas-ta`), transformer sentiment (FinBERT/DictaBERT), PDF rendering (WeasyPrint) —
   and owns the DuckDB cache. n8n's embedded Python can't import those libraries, so all heavy data
   and computation stay server-side; only short text and scores ever cross the LLM boundary.
 
@@ -169,7 +169,7 @@ In a second terminal, with `npm run dev` running:
 npm run smoke      # Expect: OK for every endpoint, then "All endpoints OK."
 ```
 
-> **First `/sentiment` call is slow** — it downloads FinBERT + HeBERT (~1.7 GB) into `HF_HOME` and
+> **First `/sentiment` call is slow** — it downloads FinBERT + DictaBERT into `HF_HOME` and
 > loads them into memory. Later calls reuse the in-process pipeline.
 
 ### 5. Import the n8n workflows (one-time, in the UI)
@@ -236,7 +236,7 @@ publish a workflow whose referenced sub-workflows are not themselves published.
 | `npm run smoke`                                        | Endpoint check against the running service.                                                                                                              |
 | `npm run ingest`                                       | Pull the watchlist's OHLC into the`prices` cache (keyless — Yahoo Finance).                                                                           |
 | `npm run costs`                                        | Per-run LLM cost summary.                                                                                                                                |
-| `npm run eval`                                         | Evaluation harness ([below](#evaluation-results)) against `eval/*_labeled.jsonl`. `npm run eval -- --no-llm` runs the FinBERT/HeBERT arm only (free). |
+| `npm run eval`                                         | Evaluation harness ([below](#evaluation-results)) against `eval/*_labeled.jsonl`. `npm run eval -- --no-llm` runs the FinBERT/DictaBERT arm only (free). |
 | `npm run db:init`                                      | Create/repair the DuckDB schema.                                                                                                                         |
 | `npm run dev:service` / `dev:n8n` / `dev:frontend` | Just one process, for debugging.                                                                                                                         |
 
@@ -288,7 +288,7 @@ into both processes.
 | `QUANT_SERVICE_URL`         | `http://127.0.0.1:8000`      | Where n8n reaches the service; the runner derives uvicorn's port from it. Use`http://host.docker.internal:8000` if n8n runs in Docker. |
 | `N8N_CHAT_WEBHOOK_URL`      | —                             | Chat front end → n8n. The Chat Trigger node's Production URL (ends in`/chat`).                                                        |
 | `DUCKDB_PATH`               | `quant_service/store.duckdb` | Repo-root-relative; the runner absolutizes it.                                                                                           |
-| `HF_HOME`                   | `.hf_cache`                  | Hugging Face cache (FinBERT/HeBERT weights).                                                                                             |
+| `HF_HOME`                   | `.hf_cache`                  | Hugging Face cache (FinBERT/DictaBERT weights).                                                                                             |
 | `REPORT_DIR`                | `reports`                    | Generated PDFs.                                                                                                                          |
 | `TZ` / `GENERIC_TIMEZONE` | `Asia/Jerusalem`             | Store UTC, render local. n8n evaluates cron in`GENERIC_TIMEZONE` — leave it set or the schedule fires at the wrong hours.             |
 
@@ -301,7 +301,7 @@ each is deliberate, visible in the report, and measured by the [evaluation harne
 
 | Technique                                                               | Where                                    | What it adds                                                                                                                           |
 | ----------------------------------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| **Fine-tuned domain transformers** (FinBERT EN, HeBERT HE)        | `/sentiment` endpoint, Sentiment Agent | An independent sentiment signal alongside the LLM; their disagreement becomes a first-class, reported feature.                         |
+| **Fine-tuned domain transformers** (FinBERT EN, DictaBERT HE)        | `/sentiment` endpoint, Sentiment Agent | An independent sentiment signal alongside the LLM; their disagreement becomes a first-class, reported feature.                         |
 | **Few-shot prompting from labeled JSONL**                         | Sentiment + Earnings agents              | Prompt engineering that is version-controlled (`prompts/`) and evaluable, not buried in a node.                                      |
 | **Self-consistency sampling** (n=3, temperature 0.3)              | Earnings number extraction               | Enforces "do not invent numbers"*by construction*: a figure commits only when ≥2 of 3 samples agree; otherwise it is `ambiguous`. |
 | **Multi-pass critique loop** (draft → devil's advocate → final) | Risk Manager                             | The recommendation visibly audits its own reasoning, which curbs overconfident calls.                                                  |
@@ -332,25 +332,43 @@ one-page summary. Reproduce with `npm run eval` (needs the service running and a
 `-- --no-llm` runs the free transformer arm only).
 
 ```
-Evaluation summary  (eval-20260723-084633)
+Evaluation summary  (eval-20260803-055507)
 Sentiment: 30 items (20 EN, 10 HE)   Earnings: 10 disclosures   Chat: 7 router cases
 
-Agent                       Dataset             Metrics
+Agent                         Dataset             Metrics
 ------------------------------------------------------------------------------
-Sentiment (LLM)             sentiment_labeled   accuracy 0.90 (27/30) | MAE 0.12  [haiku]
-Sentiment (FinBERT/HeBERT)  sentiment_labeled   accuracy 0.63 (19/30) | MAE 0.41
-Sentiment (agreement)       sentiment_labeled   Pearson r 0.70 (n=30)
-Earnings (classifier)       earnings_labeled    macro-F1(kind) 1.00 | materiality acc 0.90 (n=10)  [grok]
-Earnings (extractor)        earnings_labeled    precision 1.00 | recall 1.00 | ambiguous-when-absent 22/22  [grok]
-Chat router (§6.5)          chat_refusal        refusal 4/5 | routing 2/2 | no fabrication | failed: refuse-comparison  [haiku]
+Sentiment (LLM)               sentiment_labeled   accuracy 0.90 (27/30) | MAE 0.12  [haiku]
+Sentiment (FinBERT/DictaBERT) sentiment_labeled   accuracy 0.77 (23/30) | MAE 0.39
+  └ en                        finbert             accuracy 0.80 (16/20) | MAE 0.43
+  └ he                        dictabert           accuracy 0.70 (7/10) | MAE 0.32
+Sentiment (agreement)         sentiment_labeled   Pearson r 0.82 (n=30)
+Earnings (classifier)         earnings_labeled    macro-F1(kind) 1.00 | materiality acc 0.90 (n=10)  [grok]
+Earnings (extractor)          earnings_labeled    precision 0.88 | recall 0.88 | ambiguous-when-absent 21/22  [grok]
+Chat router (§6.5)            chat_refusal        refusal 4/5 | routing 2/2 | no fabrication | failed: refuse-comparison  [haiku]
 ------------------------------------------------------------------------------
-LLM cost (this run): $0.1166   (chat 11,872 tok, earnings 48,338 tok, sentiment 5,332 tok)
+LLM cost (this run): $0.1166   (chat 11,872 tok, earnings 48,311 tok, sentiment 5,337 tok)
 ```
 
-Reading the numbers: FinBERT (English) is the stronger transformer arm, as expected — **HeBERT is a
-general Hebrew sentiment model, not finance-tuned**, and the gap is real rather than hidden. The
-earnings extractor is scored on whether it commits a figure *only* when the source states it and
-marks everything else `ambiguous` — i.e. the "never invent numbers" guarantee, measured.
+**The transformer arm is reported per language**, because it is two different models and the mean
+of the two describes neither. FinBERT carries English at 0.80. Hebrew sits at 0.70 — and getting
+there meant replacing the model. The original choice, `avichr/heBERT_sentiment_analysis`, scored
+0.30, and inspecting *why* showed it was not weakly discriminating but **not discriminating at
+all**: `neutral` for 10 of 10 Hebrew items, at 0.833–0.998 confidence, including a *"record
+quarterly orders, guidance raised"* headline at 0.998. Two rescue attempts failed — re-normalising
+polarity over the polar classes made it *worse* (0.53 overall), and a threshold sweep from ±0.1 to
+±0.6 moved nothing — so it was swapped for `dicta-il/dictabert-sentiment`, which reads every
+negative and every neutral correctly and misses only positives. Agreement between the two arms rose
+from 0.70 to **0.82** as a result: a model returning ~0 for everything cannot correlate with
+anything, so the old figure was largely measuring noise.
+
+**On the earnings extractor, and what "never invent numbers" actually buys you.** That row scores
+whether a figure is committed *only* when the source states it verbatim. The mechanism is
+self-consistency: three samples at temperature 0.3, committed on a majority. Because it samples, it
+is **not deterministic** — this run marked absent figures `ambiguous` 21 times out of 22, where an
+earlier run scored 22/22. So one field was committed that the source does not contain. The honest
+claim is that self-consistency *sharply reduces* invented figures and makes the remainder visible
+and measurable — not that it eliminates them. A single-sample extractor has no such guard at all,
+and no way to know how often it is wrong.
 
 ---
 
@@ -364,9 +382,17 @@ any of them. Design [§13](docs/design.md) has the full detail and the reasoning
 
 - **Coverage of TA-35 mid-caps is patchy** outside the largest names. Sentiment for a thinly-covered
   ticker is legitimately thin — the report prints the article count and never pads it.
-- **HeBERT is a general Hebrew sentiment model, not a finance-tuned one.** It is measurably weaker on
-  financial Hebrew than FinBERT is on financial English, which is why the [evaluation
-  results](#evaluation-results) report the two arms separately instead of averaging the gap away.
+- **The Hebrew arm is weaker than the English one, and no Hebrew model here is finance-tuned.**
+  DictaBERT scores 0.70 against FinBERT's 0.80, and its misses are one-sided: it reads positive
+  financial news as neutral while getting every negative right — so Hebrew coverage understates good
+  news rather than inventing bad news. Conservative, but a real skew. It replaced HeBERT, which
+  scored 0.30 by never committing to a direction at all; the [evaluation
+  results](#evaluation-results) report the arms per language rather than hiding the gap in a mean.
+- **Self-consistency reduces invented figures; it does not eliminate them.** Extraction samples three
+  times at temperature 0.3 and commits on a majority, so it is stochastic: measured runs have scored
+  `ambiguous`-when-absent at 22/22 and at 21/22. The one miss is a figure committed that its source
+  does not state. The guard is a large improvement over a single sample — and, unlike a single
+  sample, it is measurable — but it is not a proof.
 - **A derived search term is weaker than a hand-tuned one.** So that any S&P 500 name works without
   500 config entries, an unlisted US ticker's news query is derived from its SEC *registrant* name.
   Where that differs from the name the press uses — "Alphabet" vs. "Google" — the query is simply

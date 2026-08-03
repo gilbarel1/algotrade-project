@@ -131,7 +131,7 @@ reasoning trace.
   <tr>
     <td class="agent-name">Sentiment<br><span style="font-weight:400;color:#6a737d;font-size:8.6pt">claude-haiku-4.5</span></td>
     <td>Reads recent news from NewsAPI and RSS, English and Hebrew</td>
-    <td><b>Dual scoring.</b> An LLM and a fine-tuned transformer (FinBERT for English, HeBERT for Hebrew) score every article independently. Their disagreement is itself a reported signal.</td>
+    <td><b>Dual scoring.</b> An LLM and a fine-tuned transformer (FinBERT for English, DictaBERT for Hebrew) score every article independently. Their disagreement is itself a reported signal.</td>
   </tr>
   <tr>
     <td class="agent-name">Earnings<br><span style="font-weight:400;color:#6a737d;font-size:8.6pt">grok-4.3</span></td>
@@ -192,12 +192,12 @@ n8n's execution API, renders the PDF, and closes the run.
     <th>What it adds</th>
   </tr>
   <tr>
-    <td><b>Dual sentiment</b><br><span style="color:#6a737d;font-size:8.8pt">LLM alongside FinBERT / HeBERT</span></td>
+    <td><b>Dual sentiment</b><br><span style="color:#6a737d;font-size:8.8pt">LLM alongside FinBERT / DictaBERT</span></td>
     <td>An independent, non-LLM opinion on every article. Disagreement above a threshold caps conviction at medium and is printed in the report — model conflict becomes information rather than something averaged away.</td>
   </tr>
   <tr>
     <td><b>Self-consistency extraction</b><br><span style="color:#6a737d;font-size:8.8pt">n = 3, temperature 0.3, majority vote</span></td>
-    <td>“Never invent numbers” enforced by construction rather than by instruction. A figure is committed only when repeated samples agree on text present verbatim in the source; everything else prints as <code>ambiguous</code>, visually distinct in the PDF.</td>
+    <td>“Never invent numbers” enforced by construction rather than by instruction. A figure is committed only when repeated samples agree on text present verbatim in the source; everything else prints as <code>ambiguous</code>, visually distinct in the PDF. Sampling makes it stochastic, so it sharply reduces invented figures and makes the residue <i>measurable</i> — see §5.1.</td>
   </tr>
   <tr>
     <td><b>Three-pass critique loop</b><br><span style="color:#6a737d;font-size:8.8pt">with a deterministic rubric clamp</span></td>
@@ -225,19 +225,33 @@ Scored against hand-labelled fixtures: 30 news items (20 English, 10 Hebrew), 10
 <table>
   <tr><th style="width: 38%">Agent</th><th>Result</th></tr>
   <tr><td>Sentiment — LLM</td><td>accuracy <b>0.90</b> (27 / 30) · MAE 0.12</td></tr>
-  <tr><td>Sentiment — FinBERT / HeBERT</td><td>accuracy <b>0.63</b> (19 / 30) · MAE 0.41</td></tr>
-  <tr><td>Sentiment — agreement</td><td>Pearson r 0.70 (n = 30)</td></tr>
+  <tr><td>Sentiment — transformers, overall</td><td>accuracy <b>0.77</b> (23 / 30) · MAE 0.39</td></tr>
+  <tr><td style="padding-left:14pt">└ English — FinBERT</td><td>accuracy <b>0.80</b> (16 / 20) · MAE 0.43</td></tr>
+  <tr><td style="padding-left:14pt">└ Hebrew — DictaBERT</td><td>accuracy <b>0.70</b> (7 / 10) · MAE 0.32</td></tr>
+  <tr><td>Sentiment — agreement</td><td>Pearson r <b>0.82</b> (n = 30)</td></tr>
   <tr><td>Earnings — classifier</td><td>macro-F1 <b>1.00</b> · materiality accuracy 0.90 (n = 10)</td></tr>
-  <tr><td>Earnings — extractor</td><td>precision <b>1.00</b> · recall <b>1.00</b> · <b>ambiguous-when-absent 22 / 22</b></td></tr>
+  <tr><td>Earnings — extractor</td><td>precision 0.88 · recall 0.88 · <b>ambiguous-when-absent 21 / 22</b></td></tr>
   <tr><td>Chat router</td><td>refusal 4 / 5 · routing 2 / 2 · no fabrication</td></tr>
 </table>
 
 <p>
-Read honestly, the transformer arm is weaker than the LLM arm largely because <b>HeBERT is a
-general Hebrew sentiment model, not a finance-tuned one</b>. That gap is measured and published
-rather than hidden — and it is precisely why disagreement between the two arms is treated as a
-signal instead of noise. The extractor row is the “never invent numbers” guarantee, measured: every
-figure absent from its source came back <code>ambiguous</code>, 22 times out of 22.
+<b>The transformer arm is reported per language</b>, because it is two models and the mean of the
+two describes neither. Getting Hebrew to 0.70 meant replacing the model: the original choice,
+HeBERT, scored 0.30 — and inspection showed it was not weakly discriminating but not discriminating
+at all, returning <i>neutral</i> for 10 of 10 Hebrew items at 0.833–0.998 confidence, including a
+“record quarterly orders, guidance raised” headline at 0.998. Re-normalising its polarity made
+matters worse (0.53) and a threshold sweep moved nothing, so it was swapped for DictaBERT, which
+reads every negative and every neutral correctly. Agreement between the arms rose 0.70 → 0.82 as a
+consequence: a model outputting ~0 for everything cannot correlate with anything.
+</p>
+
+<p>
+<b>The extractor row is the “never invent numbers” guarantee, measured — including its limit.</b>
+Because self-consistency <i>samples</i> (three times at temperature 0.3), it is not deterministic:
+measured runs scored <code>ambiguous</code>-when-absent at 22/22 and at 21/22, the single miss being
+a figure committed that its source does not state. The honest claim is that the mechanism sharply
+reduces invented figures and makes the residue measurable — not that it eliminates them. A
+single-sample extractor offers neither guarantee nor a way to count its own failures.
 </p>
 
 <h3>5.2 · Live behaviour, including under failure</h3>
