@@ -4,7 +4,9 @@ Two real runs, taken apart. The first shows the dual-sentiment mechanism decidin
 second shows a mixed TA-35 + S&P 500 watchlist and the "never invent numbers" guarantee doing both
 of its jobs at once. Then the evaluation-harness output, reproduced verbatim.
 
-Companion to [`../README.md`](../README.md) and the design in [`design.md`](design.md).
+Both reports are committed at [`samples/`](samples/) so they can be read without running the
+pipeline (a full run needs API keys). Companion to [`../README.md`](../README.md) and the design in
+[`design.md`](design.md).
 
 ---
 
@@ -13,6 +15,8 @@ Companion to [`../README.md`](../README.md) and the design in [`design.md`](desi
 Started from the **chat assistant** (<http://localhost:8001>), hence `mode = chat`. The assistant
 resolved *Netflix* → `NFLX`, saw the bare symbol, routed it to the **US** market, and ran the same
 pipeline a manual or scheduled run uses.
+
+📄 **[`samples/sample-report-dual-sentiment.pdf`](samples/sample-report-dual-sentiment.pdf)**
 
 ```
 runs             run_id = r_2026-08-06T11:39 · mode = chat · status = ok
@@ -79,6 +83,8 @@ recent disclosure" without making a single LLM call. Cheap by construction, not 
 ## Run 2 — a mixed TA-35 + S&P 500 watchlist
 
 One run, two markets, one PDF.
+
+📄 **[`samples/sample-report-mixed-watchlist.pdf`](samples/sample-report-mixed-watchlist.pdf)**
 
 ```
 runs             run_id = r_2026-08-03T07:08 · mode = chat · status = degraded

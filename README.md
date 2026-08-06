@@ -439,6 +439,9 @@ any of them. Design [§13](docs/design.md) has the full detail and the reasoning
   contracts, agent schemas, DuckDB tables, and parameters. The source of truth.
 - **[`docs/results.md`](docs/results.md)** — a walk-through of real runs end-to-end, with the
   reasoning trace and persisted data, plus the evaluation results.
+- **[`docs/samples/`](docs/samples/)** — two reports the system actually produced, committed so you
+  can read the output **without running the pipeline** (which needs API keys): one showing dual
+  sentiment splitting a call, one showing a mixed TA-35 + S&P 500 watchlist in a single PDF.
 - **[`docs/demo_script.md`](docs/demo_script.md)** — a 5-minute demo outline.
 - **[`docs/sp500_integration_plan.md`](docs/sp500_integration_plan.md)** — how the mixed
   TA-35 + S&P 500 market abstraction was added.
