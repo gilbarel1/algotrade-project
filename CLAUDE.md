@@ -71,7 +71,7 @@ Each step maps to sections of `docs/design.md`. Build in the order listed and do
   Replace stubs with real implementations (`pandas-ta`). *Verify:* real values for a sample ticker; responses match §5 contracts.
 - [x] **Step 3 — Technical Agent sub-workflow (Milestone B1).**
   n8n sub-workflow per §3.3 and §6.2: HTTP calls to `/ohlc` and `/indicators`, then Gemini Flash-Lite narration. Pydantic schema validates the Flash-Lite output before returning. *Verify:* run the sub-workflow on one ticker; output matches §3.3 shape; a deliberately-malformed LLM response triggers the retry path.
-- [x] **Step 4 — `/sentiment` real: FinBERT + HeBERT (Milestone B2, part 1).**
+- [x] **Step 4 — `/sentiment` real: FinBERT + HeBERT (Milestone B2, part 1).** *(HeBERT was later replaced by DictaBERT — design §3.1.)*
   Implement the quant-service `/sentiment` endpoint per §5: language detection, FinBERT for EN, HeBERT for HE, batch input, model name in the response. Cache the HF models in `HF_HOME`. *Verify:* batch of EN+HE items returns per-item scores with the correct model tag; second call is fast (cached weights).
 - [x] **Step 5 — Sentiment Agent sub-workflow (Milestone B2, part 2).**
   Dual-model sentiment per §3.1: NewsAPI + RSS, LLM scoring with **few-shot examples loaded from `prompts/sentiment_examples.jsonl`**, parallel call to `/sentiment`, disagreement metric, Pydantic-validated output, persistence into `news`. *Verify:* sub-workflow returns the §3.1 shape; both `llm_sentiment` and `model_sentiment` populated; `disagreement` reflects their absolute difference; the news table stores both scores.

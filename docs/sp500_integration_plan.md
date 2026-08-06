@@ -54,7 +54,7 @@ markets:
 
 `rss_feeds` becomes keyed by group (`en_il`, `he_il`, `en_us`) instead of `en`/`he`; a new `en_us` group gets 1–2 US finance feeds (verify live URLs at build time, same as was done for Globes/Ynet). US tickers get `search_terms` entries too (EN-only, e.g. `AAPL: ["Apple Inc", "Apple"]` — same collision-avoidance care as "Teva").
 
-The rubric, Risk Manager, dual-sentiment mechanism, schemas, costs, and evals are **market-agnostic and unchanged**. FinBERT/HeBERT routing already handles US news correctly (everything is EN → FinBERT; HeBERT simply never fires).
+The rubric, Risk Manager, dual-sentiment mechanism, schemas, costs, and evals are **market-agnostic and unchanged**. The language routing already handles US news correctly: everything is EN → FinBERT, so the Hebrew scorer simply never fires. (This plan was written when the Hebrew scorer was HeBERT; it is DictaBERT since §3.1 — the routing is unchanged.)
 
 ## B. Design-doc amendment (done first, inside build Step 13 — doc wins)
 

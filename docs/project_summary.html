@@ -230,7 +230,7 @@ Scored against hand-labelled fixtures: 30 news items (20 English, 10 Hebrew), 10
   <tr><td style="padding-left:14pt">└ Hebrew — DictaBERT</td><td>accuracy <b>0.70</b> (7 / 10) · MAE 0.32</td></tr>
   <tr><td>Sentiment — agreement</td><td>Pearson r <b>0.82</b> (n = 30)</td></tr>
   <tr><td>Earnings — classifier</td><td>macro-F1 <b>1.00</b> · materiality accuracy 0.90 (n = 10)</td></tr>
-  <tr><td>Earnings — extractor</td><td>precision 0.88 · recall 0.88 · <b>ambiguous-when-absent 21 / 22</b></td></tr>
+  <tr><td>Earnings — extractor</td><td>precision <b>1.00</b> · recall <b>1.00</b> · <b>ambiguous-when-absent 22 / 22</b></td></tr>
   <tr><td>Chat router</td><td>refusal 4 / 5 · routing 2 / 2 · no fabrication</td></tr>
 </table>
 
@@ -248,8 +248,8 @@ consequence: a model outputting ~0 for everything cannot correlate with anything
 <p>
 <b>The extractor row is the “never invent numbers” guarantee, measured — including its limit.</b>
 Because self-consistency <i>samples</i> (three times at temperature 0.3), it is not deterministic:
-measured runs scored <code>ambiguous</code>-when-absent at 22/22 and at 21/22, the single miss being
-a figure committed that its source does not state. The honest claim is that the mechanism sharply
+three measured runs scored <code>ambiguous</code>-when-absent at 22/22, 21/22 and 22/22 — the single
+miss being a figure committed that its source does not state. The honest claim is that the mechanism sharply
 reduces invented figures and makes the residue measurable — not that it eliminates them. A
 single-sample extractor offers neither guarantee nor a way to count its own failures.
 </p>

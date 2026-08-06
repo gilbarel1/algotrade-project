@@ -148,8 +148,9 @@ is enforced in the prompts and in the rubric."
 
 **Say:** "Figures are extracted by sampling the model three times and committing a number only when
 at least two samples agree on text that appears **verbatim** in the filing. Anything else prints as
-`ambiguous`" *(point at one)*. "The guarantee isn't a prompt asking it nicely — it's the mechanism.
-Our evaluation measures it: 22 out of 22 figures absent from the source came back `ambiguous`."
+`ambiguous`" *(point at one)*. "The guarantee isn't a prompt asking it nicely — it's the mechanism,
+and we measure it: absent figures came back `ambiguous` 21 to 22 times out of 22 across runs. It
+samples, so it is not perfect — but unlike a single-shot extractor it can count its own misses."
 
 **Must be visible:** at least one `ambiguous` figure, styled distinctly, and a committed figure if
 one exists.
@@ -190,8 +191,10 @@ five-ticker run is four to eight cents."
 
 **Then show the evaluation table** (README or `docs/results.md`).
 
-**Say:** "Every agent is scored against hand-labeled data — including that the Hebrew arm is our weakest
-at 0.63 against the LLM's 0.90. We measure the weakness instead of hiding it."
+**Say:** "Every agent is scored against hand-labeled data, per language. The Hebrew arm is our
+weakest at 0.70 against English's 0.80 — and getting there meant measuring the first model we tried,
+finding it returned neutral for ten items out of ten, and replacing it. We publish the weakness
+rather than hiding it."
 
 **Must be visible:** per-agent cost rows, and the eval table.
 
