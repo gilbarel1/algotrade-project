@@ -29,27 +29,27 @@
   /* ---- headings ------------------------------------------------------- */
   h2 {
     font-size: 13pt; font-weight: 600; color: #14313f;
-    margin: 17pt 0 7pt 0; padding-bottom: 3pt;
+    margin: 13pt 0 6pt 0; padding-bottom: 3pt;
     border-bottom: 1pt solid #cfd6da;
   }
   h2:first-of-type { margin-top: 4pt; }
-  h3 { font-size: 10.6pt; font-weight: 600; color: #2c4a57; margin: 11pt 0 4pt 0; }
+  h3 { font-size: 10.6pt; font-weight: 600; color: #2c4a57; margin: 9pt 0 4pt 0; }
 
   /* ---- text ----------------------------------------------------------- */
-  p { margin: 0 0 8pt 0; }
+  p { margin: 0 0 7pt 0; }
   .lead { font-size: 10.6pt; color: #33404a; }
-  ul { margin: 4pt 0 10pt 0; padding-left: 15pt; }
-  li { margin-bottom: 5pt; padding-left: 2pt; }
+  ul { margin: 3pt 0 8pt 0; padding-left: 15pt; }
+  li { margin-bottom: 3.5pt; padding-left: 2pt; }
   b, strong { font-weight: 600; color: #16222b; }
   code { font-family: Consolas, "Courier New", monospace; font-size: 9pt; color: #8a4a1f; }
 
   /* ---- tables: horizontal rules only, generous padding ---------------- */
-  table { border-collapse: collapse; width: 100%; font-size: 9.4pt; margin: 8pt 0 12pt 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 9.4pt; margin: 6pt 0 10pt 0; }
   th {
     text-align: left; font-weight: 600; color: #14313f;
     border-bottom: 1pt solid #9aa7ae; padding: 0 8pt 5pt 0;
   }
-  td { border-bottom: 0.5pt solid #e3e7ea; padding: 6pt 8pt 6pt 0; vertical-align: top; line-height: 1.45; }
+  td { border-bottom: 0.5pt solid #e3e7ea; padding: 5pt 8pt 5pt 0; vertical-align: top; line-height: 1.42; }
   tr:last-child td { border-bottom: none; }
   td:last-child, th:last-child { padding-right: 0; }
   .agent-name { white-space: nowrap; font-weight: 600; color: #14313f; }
@@ -58,7 +58,7 @@
   /* ---- callout & figure ----------------------------------------------- */
   .callout {
     background: #f2f6f8; border-left: 3pt solid #4b7f96;
-    padding: 9pt 12pt; margin: 10pt 0 12pt 0; font-size: 9.8pt; line-height: 1.5;
+    padding: 8pt 11pt; margin: 8pt 0 10pt 0; font-size: 9.6pt; line-height: 1.45;
   }
   .callout .h { font-weight: 600; color: #14313f; display: block; margin-bottom: 3pt; }
   .figure { text-align: center; margin: 10pt 0 4pt 0; }
@@ -73,9 +73,24 @@
   .pass .verdict { float: right; font-size: 8.6pt; font-weight: 600; color: #14313f; background: #eef2f5; padding: 1pt 6pt; border-radius: 2pt; }
   .pass p { margin: 4pt 0 0 0; font-size: 9.4pt; line-height: 1.48; color: #33404a; }
 
+  /* ---- at-a-glance figures under the byline --------------------------- */
+  .atglance {
+    display: flex; margin: 0 0 15pt 0;
+    border: 0.5pt solid #d6dade; border-radius: 2pt;
+  }
+  .atglance div {
+    flex: 1; padding: 6pt 9pt; border-right: 0.5pt solid #e3e7ea;
+    font-size: 8.4pt; color: #6a737d; line-height: 1.3;
+  }
+  .atglance div:last-child { border-right: none; }
+  .atglance b {
+    display: block; font-size: 12.5pt; color: #14313f;
+    font-weight: 600; letter-spacing: -0.3pt; margin-bottom: 1pt;
+  }
+
   .footnote {
     font-size: 9pt; color: #52606d; line-height: 1.5;
-    border-top: 0.75pt solid #d6dade; padding-top: 7pt; margin-top: 14pt;
+    border-top: 0.75pt solid #d6dade; padding-top: 6pt; margin-top: 11pt;
   }
 </style>
 </head>
@@ -92,6 +107,14 @@
        style="color: #1a5f7a; font-weight: 600; text-decoration: underline">github.com/gilbarel1/algotrade-project</a>
     &nbsp;·&nbsp; August 2026
   </div>
+</div>
+
+<div class="atglance">
+  <div><b>6</b>n8n workflows<br>159 nodes</div>
+  <div><b>4</b>specialist agents<br>3 run in parallel</div>
+  <div><b>3</b>Risk Manager passes<br>draft → critique → final</div>
+  <div><b>112</b>offline tests<br>green in CI</div>
+  <div><b>$0.02–0.07</b>per run<br>logged per agent</div>
 </div>
 
 <h2>1 · The financial problem</h2>
@@ -155,15 +178,23 @@ reasoning trace.
   </tr>
 </table>
 
-<p>
-<b>Three entry points</b> share one pipeline. A <b>manual trigger</b> for demos. An <b>hourly
-schedule</b> with a per-market gate — a run at 11:00 Israel time analyzes only TASE names, one at
-20:00 only US names, each market carrying its own calendar, hours, news feeds, earnings source and
-currency. And a <b>chat assistant</b> with a web UI: <i>“what do you think about Teva?”</i> runs the
-real pipeline for <code>TEVA.TA</code> in roughly a minute and answers with the Risk Manager's call.
-The chat agent is deliberately a <b>router, not an analyst</b> — it may only invoke the pipeline and
-relay what comes back, and it declines to produce any figure the tools did not return.
-</p>
+<p><b>Three entry points share one pipeline</b> — no duplicated code path:</p>
+
+<table>
+  <tr><th style="width: 21%">Entry point</th><th>Behaviour</th></tr>
+  <tr>
+    <td class="agent-name">Manual trigger</td>
+    <td>The whole watchlist on demand, from the n8n editor. Never gated by market hours.</td>
+  </tr>
+  <tr>
+    <td class="agent-name">Hourly schedule</td>
+    <td>A per-market gate analyzes only tickers whose market is open: 11:00 Israel time runs the TASE names, 20:00 runs the US ones — each market carrying its own calendar, hours, news feeds, earnings source and currency.</td>
+  </tr>
+  <tr>
+    <td class="agent-name">Chat assistant</td>
+    <td><i>“what do you think about Teva?”</i> runs the real pipeline for <code>TEVA.TA</code> in about a minute. Deliberately a <b>router, not an analyst</b> — five nodes and a single tool, so it can only invoke the pipeline and relay what comes back.</td>
+  </tr>
+</table>
 
 <h2>3 · Architecture</h2>
 
@@ -236,18 +267,38 @@ Scored against hand-labelled fixtures: 30 news items (20 English, 10 Hebrew), 10
   <tr><td>Sentiment — agreement</td><td>Pearson r <b>0.82</b> (n = 30)</td></tr>
   <tr><td>Earnings — classifier</td><td>macro-F1 <b>1.00</b> · materiality accuracy 0.90 (n = 10)</td></tr>
   <tr><td>Earnings — extractor</td><td>precision <b>1.00</b> · recall <b>1.00</b> · <b>ambiguous-when-absent 22 / 22</b></td></tr>
-  <tr><td>Chat router</td><td>refusal 4 / 5 · routing 2 / 2 · no fabrication</td></tr>
+  <tr><td>Chat router</td><td>refusal <b>4 / 4</b> · routing <b>3 / 3</b> · no fabrication</td></tr>
 </table>
 
 <p>
 <b>The transformer arm is reported per language</b>, because it is two models and the mean of the
-two describes neither. Getting Hebrew to 0.70 meant replacing the model: the original choice,
-HeBERT, scored 0.30 — and inspection showed it was not weakly discriminating but not discriminating
-at all, returning <i>neutral</i> for 10 of 10 Hebrew items at 0.833–0.998 confidence, including a
-“record quarterly orders, guidance raised” headline at 0.998. Re-normalising its polarity made
-matters worse (0.53) and a threshold sweep moved nothing, so it was swapped for DictaBERT, which
-reads every negative and every neutral correctly. Agreement between the arms rose 0.70 → 0.82 as a
-consequence: a model outputting ~0 for everything cannot correlate with anything.
+two describes neither. Reaching 0.70 on Hebrew meant replacing the model — and the investigation is
+recorded because two of its steps failed:
+</p>
+
+<table>
+  <tr><th style="width: 38%">Step</th><th>Result</th></tr>
+  <tr>
+    <td>HeBERT — the original choice</td>
+    <td><b>0.30.</b> Not weakly discriminating but <i>not discriminating at all</i>: <b>neutral for 10 of 10</b> Hebrew items at 0.833–0.998 confidence, including “record quarterly orders, guidance raised” at 0.998.</td>
+  </tr>
+  <tr>
+    <td>Re-normalise polarity over the polar classes</td>
+    <td><b>Worse — 0.53.</b> The residual mass is noise, not signal.</td>
+  </tr>
+  <tr>
+    <td>Threshold sweep, ±0.1 → ±0.6</td>
+    <td>No movement beyond a single item.</td>
+  </tr>
+  <tr>
+    <td>DictaBERT — adopted</td>
+    <td><b>0.70.</b> Every negative and every neutral read correctly; it misses only positives.</td>
+  </tr>
+</table>
+
+<p>
+Agreement between the two arms rose <b>0.70 → 0.82</b> as a direct consequence — a model outputting
+~0 for everything cannot correlate with anything, so the earlier figure was largely measuring noise.
 </p>
 
 <p>
@@ -269,14 +320,12 @@ and a market-grouped summary.
 
 <div class="callout">
   <span class="h">Case study — what happens when a data source dies</span>
-  With a rejected news API key the sentiment agent degrades to zero articles. In an early run the
-  critique pass argued that the <i>absence</i> of news for a mega-cap was “itself a material
-  anomaly… both scenarios bearish” — inferring a market signal from an infrastructure failure. This
-  was caught in review and root-caused: the agent's failure status was not machine-readable to the
-  prompts. After the fix, the same ticker's critique instead notes that the system “correctly avoids
-  inventing sentiment signal”, and the final call states that <i>“a degraded agent is neutral by
-  definition… its absence is not a bearish or bullish signal”</i> — while conviction is still
-  lowered. The failure, the diagnosis and the before/after evidence are all in the repository history.
+  With a rejected news API key, sentiment degrades to zero articles. In an early run the critique
+  pass argued that the <i>absence</i> of news was “itself a material anomaly… both scenarios
+  bearish” — inferring a market signal from an infrastructure failure. Root cause: the agent's
+  failure status was not machine-readable to the prompts. After the fix the final call states that
+  <i>“a degraded agent is neutral by definition… its absence is not a bearish or bullish signal”</i>,
+  while still lowering conviction. Failure, diagnosis and before/after evidence are in the history.
 </div>
 
 <h3>5.3 · The reasoning trace, as printed in the report</h3>
@@ -289,41 +338,37 @@ is printed in full on the ticker's page.
 <div class="trace">
   <div class="pass">
     <span class="lbl">1 · Draft</span><span class="verdict">hold · low</span>
-    <p>“Agreement count is 1 of 3: only earnings aligns with a potential direction, while sentiment
-    is degraded (<b>NewsAPI failure provides no signal</b>) and technical is neutral. Per rule 2,
-    one or fewer agents agreeing mandates a ‘hold’ call regardless of conviction cap.”</p>
+    <p>“Agreement count is 1 of 3… Per rule 2, one or fewer agents agreeing mandates a ‘hold’ call
+    regardless of conviction cap.”</p>
   </div>
   <div class="pass">
     <span class="lbl">2 · Devil's-advocate critique</span><span class="verdict">counter: hold</span>
-    <p>“MACD below signal line with positive histogram — a subtle bullish inflection the draft
-    dismisses as merely neutral… Agreement count is mechanically applied, but the denominator
-    includes a degraded sentiment agent that contributed zero information. <b>The system correctly
+    <p>“MACD below signal line — a subtle bullish inflection the draft dismisses as neutral… the
+    denominator includes a degraded agent that contributed zero information. <b>The system correctly
     avoids inventing sentiment signal</b>, but the true agreement ratio is understated.”</p>
   </div>
   <div class="pass last">
     <span class="lbl">3 · Final decision</span><span class="verdict">hold · low</span>
-    <p>“The critique's technical observations are noted but do not override the mechanical agreement
-    rule… The critique correctly identifies that the degraded sentiment agent weakens the
-    denominator, which legitimately lowers conviction further; however, <b>per the rubric, a degraded
-    agent is neutral by definition and does not constitute evidence of direction — its absence is not
-    a bearish or bullish signal</b>.”</p>
+    <p>“The critique's observations do not override the mechanical agreement rule… <b>per the
+    rubric, a degraded agent is neutral by definition and does not constitute evidence of direction
+    — its absence is not a bearish or bullish signal</b>.”</p>
   </div>
 </div>
 <div class="cap" style="text-align:left">
-  Note how the critique attacks the draft on its own evidence, and the final answers each objection
-  explicitly rather than restating the draft. Full report pages and screenshots are in the repository.
+  The critique attacks the draft on its own evidence; the final answers each objection explicitly
+  rather than restating the draft. Full reports are committed under <code>docs/samples/</code>.
 </div>
 
 <h2>6 · Risks and caveats</h2>
 
 <ul>
-  <li><b>The critique loop reduces overconfidence; it does not guarantee correctness.</b> It is a structured reasoning aid, not a financial-validity guarantee. The report is educational and not investment advice, and its footer says so.</li>
-  <li><b>No live execution and no return measurement.</b> The system argues positions; it never checks whether they would have made money. A backtest is the natural next step.</li>
-  <li><b>Maya scraping is best-effort.</b> A protected JavaScript site rendered headless: layout changes can break the harvest. Figures depend on a PDF attachment two layers down, so a scanned file or dead link yields <code>ambiguous</code> figures — never guessed ones.</li>
-  <li><b>EDGAR extraction is a bounded text excerpt, not a structured parse.</b> A 10-Q's tables flatten badly into text, so press-release exhibits are preferred explicitly by the selection logic.</li>
-  <li><b>News coverage is uneven.</b> TA-35 mid-caps are thinly covered, and auto-derived search terms fail where a company's registered name differs from its press name (“Alphabet” versus “Google”, hand-curated). The free news tier binds on a large watchlist.</li>
-  <li><b>A model swap is not a no-op.</b> Models clear schema validation at different rates, and the retry path is a different branch of the graph — swapping the earnings model surfaced a latent fan-in bug the previous model had masked.</li>
-  <li><b>Two known open items.</b> The agreement rule still counts a degraded agent in its three-agent denominator, so “1 of 3” may effectively be “1 of 2 measurable” — flagged by the system's own critique pass. And one chat-router refusal case out of five still fails.</li>
+  <li><b>The critique loop reduces overconfidence; it does not guarantee correctness.</b> It is a structured reasoning aid, not a financial-validity guarantee — and the report's footer says so.</li>
+  <li><b>No live execution and no return measurement.</b> The system argues positions; it never checks whether they would have made money.</li>
+  <li><b>Maya scraping is best-effort.</b> A protected JavaScript site rendered headless, with figures two layers down in a PDF attachment. A scanned file or dead link yields <code>ambiguous</code> figures — never guessed ones.</li>
+  <li><b>EDGAR extraction is a bounded excerpt, not a structured parse.</b> A 10-Q's tables flatten badly into text, so the selection logic explicitly prefers press-release exhibits.</li>
+  <li><b>News coverage is uneven.</b> Measured live: <code>TEVA.TA</code> returns 0 items in the default 3-day window against 47–49 for large US names. Auto-derived search terms also fail where a registered name differs from the press name (“Alphabet” vs “Google”, hand-curated).</li>
+  <li><b>A model swap is not a no-op.</b> Models clear schema validation at different rates and the retry path is a different branch — swapping the earnings model surfaced a latent fan-in bug the previous one had masked.</li>
+  <li><b>One open item.</b> The agreement rule counts a degraded agent in its three-agent denominator, so “1 of 3” may really be “1 of 2 measurable” — raised by the system's own critique pass during a live run.</li>
 </ul>
 
 <h2>7 · Future development</h2>
