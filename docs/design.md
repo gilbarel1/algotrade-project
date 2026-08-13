@@ -720,7 +720,7 @@ A small evaluation harness ships with the system; it prints a one-page summary o
 ## 10. Repository structure
 
 ```
-n8n-investment-team/
+algotrade-project/
 ├── n8n/
 │   ├── orchestrator.workflow.json
 │   ├── chat_assistant.workflow.json   # §6.5 Chat Trigger -> AI Agent (router only); Step 12
@@ -728,6 +728,8 @@ n8n-investment-team/
 │   └── README_credentials.md
 ├── quant_service/
 │   ├── app.py
+│   ├── smoke_test.py                   # endpoint check against a running service (npm run smoke)
+│   ├── store_init.py                   # creates/repairs the §4.2 DuckDB schema (npm run db:init)
 │   ├── routers/ {ohlc,indicators,sentiment,news,earnings,report,validate,riskmanager,runs,costs}.py  # news = /news/fetch + /news/store; earnings = /earnings/fetch + /earnings/store; riskmanager = /riskmanager/context (§3.4 prompts + rubric + deterministic facts); runs = /runs/start + /runs/finish + /recommendations/store (§6.1 orchestration writes); costs = /costs/harvest (§9.4)
 │   ├── data/ {markets.py, yahoo.py, newsapi.py, maya.py, edgar.py, rss.py, news_store.py, earnings_store.py, run_store.py, textclean.py, tls.py, cache.py, ingest.py}  # markets = symbol→market, market properties, session gate + the single config/universe.yaml reader (§4.4, §6.1); ingest = OHLC pull/clean CLI (python -m data.ingest); news_store/earnings_store/run_store = table upserts (run_store = runs + recommendations); textclean = shared §4.3 text cleaning + term matching; maya = Playwright scraper + PDF-attachment text extraction (§3.2, pypdf); edgar = SEC EDGAR US earnings source (§3.2, §4.1 — httpx, no Playwright); tls = OS-trust SSL context for httpx
 │   ├── indicators/ {calc.py}  # pandas-ta computation behind /indicators (§3.3, §5)
@@ -747,9 +749,23 @@ n8n-investment-team/
 │              chat_assistant_system.md}   # §6.5 router-only system prompt
 ├── eval/     {sentiment_labeled.jsonl, earnings_labeled.jsonl, chat_refusal_labeled.jsonl, run.py}
 ├── config/   {universe.yaml, rubric.yaml}
+├── tests/    {conftest.py, test_markets.py, test_rubric_clamp.py, test_schemas.py,
+│              test_cost_log.py, test_workflow_ids.py, test_earnings_degradation.py,
+│              test_degraded_messages.py, test_report_paths.py}
+│          # offline suite — no network, no keys, no LLM spend. test_rubric_clamp.py
+│          # extracts `jsCode` from n8n/agents/risk_manager.json and runs it under Node,
+│          # so the §3.4 rules are pinned against what n8n actually ships.
+├── scripts/  {setup,dev,doctor,eval,py,pyroot}.mjs, lib/env.mjs, sync_chat_prompt.py
+│          # the `npm run …` entry points; lib/env.mjs resolves the venv and loads .env
+├── .github/workflows/ci.yml            # ruff + tests on every push (no torch/Playwright/GTK)
 ├── reports/  # generated PDFs, gitignored
-├── docs/     {design.md, results.md, demo_script.md, architecture.svg}
+├── docs/     {design.md, results.md, demo_script.md, architecture.svg,
+│              acceptance_checklist.md, sp500_integration_plan.md,
+│              screenshots/, samples/}   # samples/ = two committed PDFs the system produced
 ├── README.md
+├── pyproject.toml                       # pytest + ruff config (§10 tooling)
+├── package.json                         # npm run scripts
+├── requirements-dev.txt                 # test/lint deps only (what CI installs)
 ├── .env.example
 └── .gitignore
 ```

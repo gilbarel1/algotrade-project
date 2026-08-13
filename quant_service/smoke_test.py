@@ -8,7 +8,7 @@ Usage (with the service running via `uvicorn app:app --port 8000`):
     python smoke_test.py
     python smoke_test.py http://localhost:8000
 
-Note: the first `/sentiment` call downloads/loads the FinBERT + HeBERT weights
+Note: the first `/sentiment` call downloads/loads the FinBERT + DictaBERT weights
 (cached under HF_HOME), which can take tens of seconds — hence the generous
 per-request timeout below.
 """

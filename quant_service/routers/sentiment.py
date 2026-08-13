@@ -1,7 +1,7 @@
-"""POST /sentiment — FinBERT/HeBERT score for a batch of texts (§5, §3.1).
+"""POST /sentiment — FinBERT/DictaBERT score for a batch of texts (§5, §3.1).
 
 Routes each item by language (explicit field wins, else Hebrew-codepoint
-detection): EN -> ProsusAI/finbert, HE -> avichr/heBERT_sentiment_analysis.
+detection): EN -> ProsusAI/finbert, HE -> dicta-il/dictabert-sentiment.
 Items are scored in one batched pipeline call per model and reassembled into
 the original order. Weights are cached under HF_HOME; a model that fails to
 load (e.g. offline before the cache is warm) yields a degraded §5-shaped

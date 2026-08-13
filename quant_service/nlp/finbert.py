@@ -67,10 +67,12 @@ def _configure_hf_tls() -> None:
 def polarity_from_labels(label_scores: List[dict]) -> float:
     """Collapse a full label distribution to a -1..+1 polarity score.
 
-    Matching is case-insensitive substring on "pos"/"neg" because HeBERT ships
-    misspelled labels in some revisions ("possitive", "negetive", "natural");
-    substring matching covers both the typo'd and corrected label sets. A label
-    matching neither contributes 0 (neutral) rather than crashing.
+    Matching is case-insensitive substring on "pos"/"neg" so one mapping serves
+    every checkpoint: FinBERT's lowercase `positive`, DictaBERT's capitalised
+    `Positive`, and the misspelled labels some Hebrew checkpoints ship
+    ("possitive", "negetive", "natural"). That tolerance is why swapping the
+    Hebrew model needed no change here. A label matching neither contributes 0
+    (neutral) rather than crashing.
     """
     pos = neg = 0.0
     for entry in label_scores:

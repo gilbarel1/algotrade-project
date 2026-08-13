@@ -4,7 +4,7 @@
 // quant_service/), so — unlike scripts/py.mjs — this runs with cwd = REPO_ROOT.
 //
 //   node scripts/eval.mjs            # full run (needs the service up + OPENROUTER_API_KEY)
-//   node scripts/eval.mjs --no-llm   # FinBERT/HeBERT arm only
+//   node scripts/eval.mjs --no-llm   # FinBERT/DictaBERT arm only
 
 import { spawnSync } from "node:child_process";
 import { REPO_ROOT, requireVenvPython, serviceEnv } from "./lib/env.mjs";

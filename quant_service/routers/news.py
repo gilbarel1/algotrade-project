@@ -176,7 +176,7 @@ def news_fetch(req: NewsFetchRequest):
     # (EN primary, HE fallback), a US name pulls en_us — never the other market's
     # local press. The group name is `<lang>_<region>`, so the feed's language is
     # its prefix; rss.fetch_rss carries that through per group rather than
-    # detecting it, and it routes FinBERT vs HeBERT downstream (§3.1).
+    # detecting it, and it routes FinBERT vs DictaBERT downstream (§3.1).
     for group in market_cfg.get("rss_feed_groups") or []:
         urls = feeds.get(group) or []
         if not urls:

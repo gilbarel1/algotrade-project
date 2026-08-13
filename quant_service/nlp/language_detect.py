@@ -1,4 +1,4 @@
-"""Language detection to route EN->FinBERT, HE->HeBERT (§5 /sentiment).
+"""Language detection to route EN->FinBERT, HE->DictaBERT (§5 /sentiment).
 
 Dependency-free heuristic: any Hebrew-block codepoint (U+0590-U+05FF) marks the
 text as Hebrew, otherwise English. An explicit per-item `language` field ("en" or
