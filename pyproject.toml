@@ -13,6 +13,10 @@ filterwarnings = [
     # pandas-ta touches a pandas option removed in 4.0; not ours to fix, and noisy.
     "ignore:.*mode.copy_on_write.*:FutureWarning",
     "ignore:.*mode.copy_on_write.*",
+    # starlette's TestClient prefers httpx2. httpx is pinned to 0.28.1 to match
+    # quant_service/requirements.txt, where it is the HTTP client the service
+    # itself uses; taking httpx2 here just for tests would split that pin.
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated.*",
 ]
 
 [tool.ruff]

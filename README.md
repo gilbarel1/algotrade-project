@@ -250,7 +250,7 @@ not a prerequisite.
 npm run test
 ```
 
-**112 tests, offline, a few seconds** — no network, no API keys, no LLM spend, so they are safe to
+**130 tests, offline, a few seconds** — no network, no API keys, no LLM spend, so they are safe to
 run on every change. They pin the parts where a silent regression would be expensive rather than
 obvious:
 
@@ -259,6 +259,7 @@ obvious:
 | **Market gate** (`test_markets.py`) | Symbol → market, and the per-market session gate in each market's own timezone — including the two-to-three-week windows where Israel and the US have swapped DST on different dates, which a fixed UTC offset gets wrong. |
 | **Rubric clamp** (`test_rubric_clamp.py`) | The §3.4 decision rules, executed **as the workflow's own JavaScript** — the test extracts `jsCode` from `n8n/agents/risk_manager.json` and runs it under Node, so it cannot drift from what n8n ships. |
 | **LLM boundary** (`test_schemas.py`) | Every Pydantic schema accepts the canonical enums and rejects invented ones, out-of-range scores, and extra fields a model might smuggle through. |
+| **`/validate` contract** (`test_validate_endpoint.py`) | The endpoint every agent's retry branch reads, driven over the real ASGI stack: the `{valid, errors}` shape for each of the seven boundaries, and that an unknown key degrades instead of raising. It also parses `n8n/agents/*.json` and asserts every `agent` key the workflows **post** is registered — an unregistered key never raises, it just fails validation forever, so each run degrades in a way that reads like a flaky model rather than a typo. |
 | **Never invent numbers** (`test_schemas.py`, `test_earnings_degradation.py`) | Figure confidence must be 1–3; a lazy `{}` sample fails validation; an excerpt-layer fallback does *not* degrade, while a candidate with no verbatim text still does. |
 | **Cost accounting** (`test_cost_log.py`) | §7 prices, and that calls collapse onto the `(agent, model)` key with an unknown model priced at a visible 0.0 rather than crashing a run. |
 | **Workflow ids** (`test_workflow_ids.py`) | The §4.4 resolution ladder — env, then name lookup, then config — plus the ambiguity guard that refuses to guess between two same-named workflows. |

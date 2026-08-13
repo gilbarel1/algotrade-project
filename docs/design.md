@@ -750,11 +750,14 @@ algotrade-project/
 ├── eval/     {sentiment_labeled.jsonl, earnings_labeled.jsonl, chat_refusal_labeled.jsonl, run.py}
 ├── config/   {universe.yaml, rubric.yaml}
 ├── tests/    {conftest.py, test_markets.py, test_rubric_clamp.py, test_schemas.py,
-│              test_cost_log.py, test_workflow_ids.py, test_earnings_degradation.py,
-│              test_degraded_messages.py, test_report_paths.py}
-│          # offline suite — no network, no keys, no LLM spend. test_rubric_clamp.py
-│          # extracts `jsCode` from n8n/agents/risk_manager.json and runs it under Node,
-│          # so the §3.4 rules are pinned against what n8n actually ships.
+│              test_validate_endpoint.py, test_cost_log.py, test_workflow_ids.py,
+│              test_earnings_degradation.py, test_degraded_messages.py,
+│              test_report_paths.py}
+│          # offline suite — no network, no keys, no LLM spend. Two tests read the
+│          # shipped workflow JSON so service and workflows cannot drift apart:
+│          # test_rubric_clamp.py runs the §3.4 rubric's own `jsCode` under Node, and
+│          # test_validate_endpoint.py asserts every `agent` key the workflows POST
+│          # is registered in the §5 /validate schema registry.
 ├── scripts/  {setup,dev,doctor,eval,py,pyroot}.mjs, lib/env.mjs, sync_chat_prompt.py
 │          # the `npm run …` entry points; lib/env.mjs resolves the venv and loads .env
 ├── .github/workflows/ci.yml            # ruff + tests on every push (no torch/Playwright/GTK)
