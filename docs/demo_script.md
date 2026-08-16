@@ -236,7 +236,8 @@ talking on a full stop.
 | A degraded agent is not a signal | `prompts/risk_manager_*.md`; design §3.4 |
 | Cost logging | `npm run costs`; `costs` table; `quant_service/ops/cost_log.py` |
 | Evaluation | `npm run eval`; `eval/*_labeled.jsonl`; [`results.md`](results.md) |
-| Tests and CI | `npm run test` (112 offline tests); `.github/workflows/ci.yml` |
+| Tests and CI | `npm run test` (148 offline tests); `.github/workflows/ci.yml` |
+| Data integrity over convenience | `quant_service/data/yahoo.py` (grid from the source); `tests/test_ohlc_calendar.py` |
 | Limitations | [design §13](design.md); the summary PDF §6 |
 
 **Likely questions:**
@@ -247,3 +248,13 @@ talking on a full stop.
   figures marked `ambiguous`. It's a mechanism, not an instruction.
 - *"What would you do next?"* — Backtest the recommendation stream against realized returns. Right
   now we measure reasoning quality, not alpha.
+- *"Did anything surprise you?"* — The best answer in the project, if asked. Yahoo returns `.TA` bars
+  on a **Mon–Fri** index even though Tel Aviv trades Sun–Thu. Reindexing onto the configured week
+  therefore threw away every real Friday and forward-filled a synthetic Sunday — **19% of every TASE
+  series**, each phantom carrying a zero return and near-zero true range, quietly deflating ATR and
+  flattening RSI. Nothing failed; the numbers were just wrong. The grid now comes from the data, so
+  the assumption is gone rather than corrected, and two invariants are pinned: never drop a bar the
+  source sent, never invent one it didn't. The cache had to change too — insert-or-replace could not
+  *retract* the phantoms, so they outlived the fix until a re-ingest was made authoritative for its
+  window. Worth saying plainly: what those Friday bars really are is still unresolved, and it is
+  recorded as an open question rather than guessed at.
