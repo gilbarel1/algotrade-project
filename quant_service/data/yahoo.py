@@ -5,15 +5,28 @@ rules, and writes the result into the DuckDB `prices` cache (§4.2):
 
   * **Adjusted close** — `auto_adjust=True` so OHLC are split/dividend adjusted
     and `close` is the adjusted close (§4.3).
-  * **Market-calendar reindex** — reindex onto the session grid of the symbol's
-    own market (§4.4): Sunday–Thursday for `tase` (the Israeli trading week —
-    Friday/Saturday are the weekend, not Sat/Sun), Monday–Friday for `us`.
-    Running a US symbol through the TASE grid would silently drop every Friday
-    session and manufacture a forward-filled Sunday one, so the grid is resolved
-    per symbol rather than assumed.
-  * **One-day-gap forward-fill** — isolated single missing sessions are bridged
-    by forward fill; runs of two or more missing sessions (genuine multi-day
-    closures) are left as gaps and dropped.
+  * **Observed-calendar reindex** — the grid of expected sessions is taken from
+    the weekdays the **source actually delivers**, not from an assumed trading
+    week. Gap detection needs a grid; inventing that grid is what makes bars
+    appear that the market never traded.
+
+    This used to read `closed_weekdays` from config (Sun–Thu for `tase`, Mon–Fri
+    for `us`). Measured against live data, Yahoo returns `.TA` daily bars on a
+    **Mon–Fri** index with no Sunday sessions at all — verified on TEVA.TA,
+    ICL.TA and POLI.TA, all tz-aware `Asia/Jerusalem`. Reindexing those onto
+    Sun–Thu discarded every real Friday bar and then forward-filled a synthetic
+    Sunday from the preceding Thursday: ~19% of the series became duplicate rows
+    with a zero return and a near-zero true range, which deflates ATR and flattens
+    RSI. Deriving the grid from the data cannot produce that class of error for
+    any market, so the assumption is gone rather than corrected.
+
+    The configured `closed_weekdays` is still compared against what arrived, and a
+    disagreement is reported (`calendar_mismatch`) instead of silently absorbed —
+    it usually means the source changed, which is worth seeing.
+  * **One-day-gap forward-fill** — isolated single missing sessions (a mid-week
+    holiday) are bridged by forward fill; runs of two or more missing sessions
+    (genuine multi-day closures) are left as gaps and dropped. No source row is
+    ever discarded, so a fill only ever *adds* a bridging bar.
   * **Outlier flag** — close-to-close returns beyond 8× MAD are flagged and
     reported. The §4.2 `prices` schema is fixed, so flags are surfaced in the
     ingest report rather than persisted as a new column.
@@ -62,6 +75,10 @@ class IngestResult:
     end: str | None = None
     status: str = "ok"
     note: str | None = None
+    # Set when the weekdays the source delivered disagree with the market's
+    # configured `closed_weekdays` (§4.4). Reported, never acted on: the data's
+    # own calendar wins, but a silent divergence would hide a source change.
+    calendar_mismatch: str | None = None
 
 
 def configure_tls() -> None:
@@ -160,23 +177,61 @@ def fetch_ohlc(symbol: str, lookback_days: int, interval: str = "1d") -> pd.Data
     return raw
 
 
-def _sessions(
-    start: pd.Timestamp, end: pd.Timestamp, closed: tuple[int, ...]
-) -> pd.DatetimeIndex:
-    """Trading-day calendar dates spanning [start, end] inclusive.
+WEEKDAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
-    `closed` is the market's non-trading weekdays in pandas numbering
-    (Mon=0…Sun=6), from `markets.closed_weekdays` (§4.4).
+
+def _observed_weekdays(index: pd.DatetimeIndex) -> tuple[int, ...]:
+    """The weekdays this source actually delivers sessions on (pandas Mon=0…Sun=6).
+
+    A weekday the market trades will recur many times across a normal lookback,
+    so presence is a reliable signal. On a very short window the set may be a
+    subset of the true trading week — which only means fewer gaps are detected
+    and fewer bars are bridged. That direction is safe: it never invents a
+    session, which is the failure this replaced.
+    """
+    return tuple(sorted({int(w) for w in index.weekday}))
+
+
+def _sessions(
+    start: pd.Timestamp, end: pd.Timestamp, open_weekdays: tuple[int, ...]
+) -> pd.DatetimeIndex:
+    """Expected-session calendar dates spanning [start, end] inclusive.
+
+    `open_weekdays` comes from the data itself (`_observed_weekdays`), so every
+    fetched row's weekday is in the grid by construction and no real session can
+    be reindexed away.
     """
     days = pd.date_range(start=start, end=end, freq="D")
-    return days[~days.weekday.isin(closed)]
+    return days[days.weekday.isin(open_weekdays)]
+
+
+def _calendar_mismatch(symbol: str, observed: tuple[int, ...]) -> str | None:
+    """Describe any disagreement between the source's calendar and config (§4.4).
+
+    Reported for visibility only — `clean_ohlc` always follows the data. Resolving
+    the market is best-effort: an unconfigured market must not fail an ingest that
+    is otherwise fine.
+    """
+    try:
+        closed = markets.closed_weekdays(markets.market(symbol))
+    except Exception:  # noqa: BLE001 - a config gap must not break ingestion
+        return None
+
+    expected = tuple(w for w in range(7) if w not in closed)
+    if observed == expected:
+        return None
+    fmt = lambda days: "/".join(WEEKDAY_NAMES[w] for w in days) or "none"  # noqa: E731
+    return (
+        f"source delivered {fmt(observed)}; config/universe.yaml expects "
+        f"{fmt(expected)} — following the source"
+    )
 
 
 def clean_ohlc(raw: pd.DataFrame, symbol: str) -> tuple[pd.DataFrame, IngestResult]:
     """Apply §4.3 cleaning and return (prices-shaped frame, ingest report).
 
     The returned frame has exactly the §4.2 `prices` columns and is ready for
-    `cache.upsert_prices`.
+    `cache.replace_prices_window`.
     """
     result = IngestResult(symbol=symbol, rows_fetched=len(raw))
     if raw.empty:
@@ -186,10 +241,13 @@ def clean_ohlc(raw: pd.DataFrame, symbol: str) -> tuple[pd.DataFrame, IngestResu
 
     df = raw.sort_index()
 
-    # 1) Reindex onto the session grid of the symbol's own market (§4.3, §4.4):
-    #    Sun–Thu for tase, Mon–Fri for us.
-    closed = markets.closed_weekdays(markets.market(symbol))
-    sessions = _sessions(df.index.min(), df.index.max(), closed)
+    # 1) Reindex onto the session grid the SOURCE uses (§4.3). Derived from the
+    #    data, so a market whose feed disagrees with the configured trading week
+    #    keeps every real bar and gains no invented one; the disagreement is
+    #    reported rather than absorbed.
+    observed = _observed_weekdays(pd.DatetimeIndex(df.index))
+    result.calendar_mismatch = _calendar_mismatch(symbol, observed)
+    sessions = _sessions(df.index.min(), df.index.max(), observed)
     reindexed = df.reindex(sessions)
 
     # 2) Classify missing sessions into single-day gaps vs multi-day closures.
@@ -273,5 +331,7 @@ def ingest_symbol(
         return IngestResult(symbol=symbol, status="degraded", note=str(exc))
 
     cleaned, result = clean_ohlc(raw, symbol)
-    result.rows_written = cache.upsert_prices(con, cleaned)
+    # Authoritative for the span it fetched, so a bar a previous (buggier) clean
+    # wrote is retracted rather than outliving the fix. See `replace_prices_window`.
+    result.rows_written = cache.replace_prices_window(con, cleaned)
     return result

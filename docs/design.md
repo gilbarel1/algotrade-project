@@ -258,7 +258,13 @@ The `costs` table is written on every LLM call, including the evaluation harness
 
 ### 4.3 Cleaning and outlier handling
 
-- OHLC: adjusted close; reindex onto the **market's session grid** (closed weekdays per the `markets:` config, §4.4 — Fri/Sat for `tase`, Sat/Sun for `us`); one-day-gap forward-fill; flag returns beyond 8× MAD. Multi-day-gap dropping already absorbs exchange holidays for both markets, so no holiday calendar is maintained.
+- OHLC: adjusted close; reindex onto the **session grid the source actually delivers** (the set of weekdays present in the fetched data); one-day-gap forward-fill; flag returns beyond 8× MAD. Multi-day-gap dropping already absorbs exchange holidays for both markets, so no holiday calendar is maintained.
+
+  **The grid is derived, not configured — this is a correction.** It previously came from `markets[<market>].closed_weekdays` (§4.4), i.e. Sun–Thu for `tase`. Measured against live data, Yahoo returns `.TA` daily bars on a **Mon–Fri** index with no Sunday sessions — verified on TEVA.TA, ICL.TA and POLI.TA, all tz-aware `Asia/Jerusalem`. Reindexing onto Sun–Thu therefore discarded every real Friday bar and forward-filled a synthetic Sunday from the preceding Thursday: **~19% of a TASE series became duplicate rows** carrying a zero return and a near-zero true range, which deflates ATR, flattens RSI, and distorts the MAD outlier test. Since the point of the grid is only to *locate missing sessions*, taking it from the data removes the assumption instead of correcting it, and makes the same failure impossible for any future market or source.
+
+  Two invariants hold regardless of market (pinned in `tests/test_ohlc_calendar.py`): **no fetched row is ever reindexed away**, and **no bar is ever created on a weekday the source does not deliver**. `closed_weekdays` remains in config — it still documents the real trading week and feeds the cache-coverage slack — and ingestion now *compares* it against what arrived, reporting a `calendar_mismatch` rather than silently absorbing the difference.
+
+  > **Open question, deliberately not resolved in code.** Whether Yahoo's Friday `.TA` bars are genuine TASE sessions, sessions labelled a day late, or a feed artifact is unresolved — their volume is consistently well below the Mon–Thu bars. What is certain is that fabricating Sundays and discarding Fridays was wrong under this system's own never-fabricate rule. The current behaviour is correct under every reading of that question: it invents nothing and drops nothing. See §13.
 - News: deduplicate by `url`; drop items where the ticker only appears in tag metadata.
 - Earnings: deduplicate by `(symbol, url)`; **the LLM never invents numbers** (§3.2 self-consistency enforces this).
 
@@ -283,8 +289,11 @@ ohlc_lookback_days: 180
 # that used to be global TASE assumptions.
 #
 # TWO WEEKDAY CONVENTIONS, deliberately kept distinct:
-#   * `closed_weekdays` uses **pandas** numbering (Mon=0 … Sun=6) — it is
-#     consumed by the OHLC session-grid reindex (§4.3).
+#   * `closed_weekdays` uses **pandas** numbering (Mon=0 … Sun=6) — it documents
+#     the market's real trading week, sets the cache-coverage slack, and is the
+#     baseline ingestion compares the source's own calendar against (§4.3). It is
+#     NOT the reindex grid: that comes from the data (§4.3, "derived, not
+#     configured"), so a feed that disagrees cannot silently reshape the series.
 #   * `trading_hours.days` uses the **n8n cron** convention (0=Sun) — it is
 #     consumed by the schedule gate (§6.1) and matches `schedule_cron` below.
 # The conversion happens in exactly one place (`quant_service/data/markets.py`).
@@ -749,10 +758,10 @@ algotrade-project/
 │              chat_assistant_system.md}   # §6.5 router-only system prompt
 ├── eval/     {sentiment_labeled.jsonl, earnings_labeled.jsonl, chat_refusal_labeled.jsonl, run.py}
 ├── config/   {universe.yaml, rubric.yaml}
-├── tests/    {conftest.py, test_markets.py, test_rubric_clamp.py, test_schemas.py,
-│              test_validate_endpoint.py, test_cost_log.py, test_workflow_ids.py,
-│              test_earnings_degradation.py, test_degraded_messages.py,
-│              test_report_paths.py}
+├── tests/    {conftest.py, test_markets.py, test_ohlc_calendar.py, test_rubric_clamp.py,
+│              test_schemas.py, test_validate_endpoint.py, test_cost_log.py,
+│              test_workflow_ids.py, test_earnings_degradation.py,
+│              test_degraded_messages.py, test_report_paths.py}
 │          # offline suite — no network, no keys, no LLM spend. Two tests read the
 │          # shipped workflow JSON so service and workflows cannot drift apart:
 │          # test_rubric_clamp.py runs the §3.4 rubric's own `jsCode` under Node, and

@@ -80,6 +80,8 @@ def main() -> int:
                 f"{res.symbol:<10}{res.rows_fetched:>8}{res.rows_written:>8}"
                 f"{res.sessions_filled:>7}{res.sessions_dropped:>8}  {rng}"
             )
+            if res.calendar_mismatch:
+                print(f"           calendar: {res.calendar_mismatch}")
             if res.outliers:
                 print(f"           outliers (>8x MAD return): {', '.join(res.outliers)}")
     finally:

@@ -250,12 +250,14 @@ not a prerequisite.
 npm run test
 ```
 
-**130 tests, offline, a few seconds** — no network, no API keys, no LLM spend, so they are safe to
+**148 tests, offline, a few seconds** — no network, no API keys, no LLM spend, so they are safe to
 run on every change. They pin the parts where a silent regression would be expensive rather than
 obvious:
 
 | Area | What is pinned |
 | --- | --- |
+| **Session calendar** (`test_ohlc_calendar.py`) | Two invariants that make a whole bug class impossible: cleaning never drops a bar the source sent, and never creates one on a weekday the source doesn't send. Pinned after the configured Sun–Thu grid was found discarding real Fridays and forward-filling synthetic Sundays into ~19% of every TASE series. |
+| **Cache retraction** (`test_price_cache.py`) | That a re-ingest can *remove* a bar, not just add or correct one — insert-or-replace alone let the phantom Sundays above outlive the fix that stopped producing them. Also that a narrow re-ingest keeps history outside its window, and a degraded (empty) fetch never empties the cache. |
 | **Market gate** (`test_markets.py`) | Symbol → market, and the per-market session gate in each market's own timezone — including the two-to-three-week windows where Israel and the US have swapped DST on different dates, which a fixed UTC offset gets wrong. |
 | **Rubric clamp** (`test_rubric_clamp.py`) | The §3.4 decision rules, executed **as the workflow's own JavaScript** — the test extracts `jsCode` from `n8n/agents/risk_manager.json` and runs it under Node, so it cannot drift from what n8n ships. |
 | **LLM boundary** (`test_schemas.py`) | Every Pydantic schema accepts the canonical enums and rejects invented ones, out-of-range scores, and extra fields a model might smuggle through. |
@@ -403,6 +405,20 @@ any of them. Design [§13](docs/design.md) has the full detail and the reasoning
 - **NewsAPI's free tier (100 requests/day) binds harder on a bigger universe.** A mixed TA-35 + S&P 500
   watchlist multiplies per-ticker calls; trim the watchlist or pay for a tier. A quota-exhausted fetch
   degrades rather than fabricating coverage.
+
+**Price data**
+
+- **Yahoo's TASE calendar does not match the real Tel Aviv trading week, and the discrepancy is
+  unexplained.** TASE trades Sunday–Thursday, but Yahoo returns `.TA` daily bars on a **Mon–Fri**
+  index with no Sunday sessions (verified on TEVA.TA, ICL.TA and POLI.TA). Ingestion therefore takes
+  its session grid from the data rather than from the configured week, and reports the disagreement
+  per symbol instead of absorbing it. Whether those Friday bars are genuine sessions, sessions
+  labelled a day late, or a feed artifact is **not resolved** — their volume runs consistently below
+  the Mon–Thu bars. The guarantee the code makes is narrower and checkable: it never invents a bar
+  and never discards one. Before this was found, the Sun–Thu grid dropped every real Friday and
+  forward-filled a synthetic Sunday, making ~19% of a TASE series duplicate rows — which deflated
+  ATR and flattened RSI on the primary market. Indicator values for TA-35 names in any report
+  generated before that fix are understated accordingly.
 
 **Earnings extraction**
 

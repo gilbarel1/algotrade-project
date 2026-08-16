@@ -61,6 +61,42 @@ def upsert_prices(con: duckdb.DuckDBPyConnection, df: pd.DataFrame) -> int:
     return len(ordered)
 
 
+def replace_prices_window(con: duckdb.DuckDBPyConnection, df: pd.DataFrame) -> int:
+    """Make `df` the authoritative content of the span it covers, then upsert.
+
+    `upsert_prices` alone is insert-or-replace by `(symbol, ts)`: it can correct a
+    row and add a row, but it can never *retract* one. So a bar that a previous
+    cleaning run wrote and the current one no longer produces survives every
+    re-ingest, and the cache keeps serving it.
+
+    That is not hypothetical. The §4.3 session grid used to be the configured
+    trading week, which forward-filled a synthetic Sunday into every TASE series
+    (see `yahoo.clean_ohlc`). Fixing the grid stopped *new* phantoms, but the old
+    ones stayed cached and kept feeding `/ohlc` and `/indicators` — the bug
+    outlived its own fix. Deleting the covered span first makes a re-ingest
+    self-healing, which is also what "idempotent" should have meant all along.
+
+    Only the `[min(ts), max(ts)]` span of `df` is cleared, so a narrow re-ingest
+    cannot drop history outside the window it fetched. An empty frame deletes
+    nothing: a degraded fetch must never empty the cache (§9.4).
+    """
+    if df.empty:
+        return 0
+
+    missing = [c for c in PRICE_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError(f"prices frame missing columns: {missing}")
+
+    symbols = df["symbol"].unique()
+    for symbol in symbols:
+        span = df.loc[df["symbol"] == symbol, "ts"]
+        con.execute(
+            "DELETE FROM prices WHERE symbol = ? AND ts BETWEEN ? AND ?",
+            [symbol, span.min(), span.max()],
+        )
+    return upsert_prices(con, df)
+
+
 def read_prices(con: duckdb.DuckDBPyConnection, symbol: str) -> pd.DataFrame:
     """Return all cached rows for a symbol, oldest first."""
     return con.execute(
