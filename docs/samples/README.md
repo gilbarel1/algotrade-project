@@ -16,3 +16,12 @@ guarantee. Both are walked through in [`../results.md`](../results.md).
 Every page ends with the methodology footer: the decision rubric, the conviction caps, the
 critique-loop description, and the disclaimer that the report is educational and that the loop
 audits the reasoning without guaranteeing the call is correct.
+
+> **One caveat on the TA-35 page of the mixed-watchlist sample.** Both runs predate the §4.3 session-grid
+> fix. At the time, TASE series were reindexed onto the configured Sun–Thu week, which dropped real Friday
+> bars and forward-filled synthetic Sundays into ~19% of the history — so **TEVA.TA's indicator values in
+> that PDF (RSI, MACD, Bollinger, ATR) are computed from a partly-fabricated series and are understated**,
+> ATR most of all. The dual-sentiment and mixed-market behaviour each sample is kept to demonstrate is
+> unaffected, and the NFLX report is unaffected entirely: US tickers always used a Mon–Fri grid that
+> matched their feed. Regenerating these needs a live run with API keys; the README's
+> [Limitations](../../README.md#limitations) records the same caveat.
