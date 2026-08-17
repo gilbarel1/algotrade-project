@@ -21,7 +21,8 @@
     "ingest": "node scripts/py.mjs -m data.ingest",
     "costs": "node scripts/py.mjs -m ops.cost_report",
     "eval": "node scripts/eval.mjs",
-    "ablations": "node scripts/ablations.mjs"
+    "ablations": "node scripts/ablations.mjs",
+    "summary": "node scripts/pyroot.mjs scripts/build_summary.py"
   },
   "dependencies": {
     "motion": "^12.42.2"

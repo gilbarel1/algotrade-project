@@ -771,13 +771,18 @@ algotrade-project/
 │          # test_rubric_clamp.py runs the §3.4 rubric's own `jsCode` under Node, and
 │          # test_validate_endpoint.py asserts every `agent` key the workflows POST
 │          # is registered in the §5 /validate schema registry.
-├── scripts/  {setup,dev,doctor,eval,ablations,py,pyroot}.mjs, lib/env.mjs, sync_chat_prompt.py
+├── scripts/  {setup,dev,doctor,eval,ablations,py,pyroot}.mjs, lib/env.mjs,
+│              sync_chat_prompt.py, build_summary.py
+│          # build_summary.py renders docs/project_summary.html -> .pdf via WeasyPrint
+│          # (npm run summary), so the graded PDF cannot drift from its HTML source
 │          # the `npm run …` entry points; lib/env.mjs resolves the venv and loads .env
 ├── .github/workflows/ci.yml            # ruff + tests on every push (no torch/Playwright/GTK)
 ├── reports/  # generated PDFs, gitignored
-├── docs/     {design.md, results.md, demo_script.md, architecture.svg,
+├── docs/     {design.md, results.md, ablations.md, demo_script.md, architecture.svg,
 │              acceptance_checklist.md, sp500_integration_plan.md,
-│              screenshots/, samples/}   # samples/ = two committed PDFs the system produced
+│              project_summary.{html,pdf}, screenshots/, samples/}
+│          # samples/ = two committed PDFs the system produced; project_summary.* = the
+│          # graded written summary, PDF built from the HTML by scripts/build_summary.py
 ├── README.md
 ├── pyproject.toml                       # pytest + ruff config (§10 tooling)
 ├── package.json                         # npm run scripts

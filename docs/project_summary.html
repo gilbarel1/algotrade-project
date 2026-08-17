@@ -229,6 +229,41 @@ n8n's execution API, renders the PDF, and closes the run.
 
 <h2>4 · The AI, beyond a baseline pipeline</h2>
 
+<p>
+These are not five separate tricks. They are one principle applied at three scales: <b>an LLM cannot
+be trusted to report its own uncertainty, so uncertainty is derived from disagreement between
+independent attempts</b> — never from the model's stated confidence, which HeBERT was willing to put
+at 0.998 while being wrong (§5.1).
+</p>
+
+<table>
+  <tr>
+    <th style="width: 26%">Where disagreement is measured</th>
+    <th style="width: 32%">What disagrees</th>
+    <th>What it produces</th>
+  </tr>
+  <tr>
+    <td><b>Within one model</b></td>
+    <td>three samples of the same extraction prompt, temperature 0.3</td>
+    <td>a figure that does not survive a majority becomes <code>ambiguous</code> — never a number</td>
+  </tr>
+  <tr>
+    <td><b>Between two models</b></td>
+    <td>an LLM against a fine-tuned transformer, same headline</td>
+    <td>a split above 0.3 caps conviction at medium; both scores are printed</td>
+  </tr>
+  <tr>
+    <td><b>Between two passes</b></td>
+    <td>a draft against a devil's advocate written to attack it</td>
+    <td>objections that survive downgrade the call; all three passes are printed</td>
+  </tr>
+</table>
+
+<p>
+The system never asks a model “how sure are you?”. Confidence is earned by surviving an independent
+challenge, and §5.2 measures whether each challenge actually has teeth.
+</p>
+
 <table>
   <tr>
     <th style="width: 33%">Technique</th>
@@ -311,18 +346,137 @@ Agreement between the two arms rose <b>0.70 → 0.82</b> as a direct consequence
 <p>
 <b>The extractor row is the “never invent numbers” guarantee, measured — including its limit.</b>
 Because self-consistency <i>samples</i> (three times at temperature 0.3), it is not deterministic:
-three measured runs scored <code>ambiguous</code>-when-absent at 22/22, 21/22 and 22/22 — the single
+four measured runs scored <code>ambiguous</code>-when-absent at 22/22, 21/22, 22/22 and 22/22 — the single
 miss being a figure committed that its source does not state. The honest claim is that the mechanism sharply
 reduces invented figures and makes the residue measurable — not that it eliminates them. A
 single-sample extractor offers neither guarantee nor a way to count its own failures.
 </p>
 
-<h3>5.2 · Live behaviour, including under failure</h3>
+<p>
+These figures <b>reproduce</b>. Re-running the harness eleven days later returned every metric
+identical — accuracy, MAE, Pearson <i>r</i>, macro-F1, precision and recall, and the router's 4/4 and
+3/3. Only the cost moved, by a 676-token difference in the earnings arm. That is the intended
+consequence of pinned fixtures and <code>temperature = 0</code> everywhere outside the
+self-consistency sampler: the one number that <i>should</i> wander is the extractor's, and it is
+reported rather than smoothed.
+</p>
+
+<h3>5.2 · Ablations — do the techniques earn their cost?</h3>
+
+<p>
+Each technique above costs real tokens: a three-sample vote triples the extraction cost, the critique
+loop triples the Risk Manager's, and a few-shot block inflates every prompt. “We used
+self-consistency” is a claim about effort, not effect. A second harness
+(<code>npm run ablations</code>) switches each technique off and re-scores.
+</p>
+
+<table>
+  <tr>
+    <th style="width: 30%">Technique removed</th>
+    <th>Measured consequence</th>
+  </tr>
+  <tr>
+    <td><b>Self-consistency</b><br><span style="color:#6a737d;font-size:8.8pt">n = 3 vote → n = 1 sample</span></td>
+    <td>Invented figures <b>0 → 2</b>; invented rate <b>0% → 3%</b>; precision <b>1.00 → 0.92</b>. Per individual draw the rate was 5%, 0%, 5% — two of three samples each committed a figure absent from the source, and <b>the vote caught both because the samples disagreed with one another</b>. Disagreement between draws <i>is</i> the detector; a single sample has no access to it.</td>
+  </tr>
+  <tr>
+    <td><b>Few-shot examples</b><br><span style="color:#6a737d;font-size:8.8pt">9 examples → none</span></td>
+    <td>Sentiment accuracy <b>0.90 → 0.77</b>, MAE <b>0.12 → 0.20</b>. The 0.77 is the point: it is exactly what the <i>free</i> local transformer arm scores. Without the examples the paid model stops being worth paying for — the few-shot block is the entire margin it contributes over the model it exists to disagree with.</td>
+  </tr>
+  <tr>
+    <td><b>The critique loop</b><br><span style="color:#6a737d;font-size:8.8pt">final → draft</span></td>
+    <td>Over 26 persisted recommendations: the call changed <b>8 times (31%)</b>, <i>every one</i> <code>long → hold</code>; conviction changed <b>9 times (35%)</b>, <b>9 downgrades and 0 upgrades</b>. Across every run on record the critique has <b>never once</b> made the system more bullish or more confident. Nor is it a rubber stamp: in 19 of 26 cases the devil's advocate argued for a different call.</td>
+  </tr>
+</table>
+
+<p>
+Two notes on method. The self-consistency arms are scored from the <i>same</i> three draws, so the
+comparison is paired, immune to sampling luck, and costs no more than one extraction run. The
+critique arm needs no LLM calls at all — the <code>draft</code> is already the counterfactual,
+recorded before the critique existed to challenge it — so that arm is free and reproducible without
+an API key.
+</p>
+
+<p>
+<b>What these numbers do not show.</b> The samples are small (10 disclosures, 30 news items, 26
+recommendations from an overlapping ticker set). The critique arm is observational rather than
+controlled: its draft was written by a prompt that <i>knows</i> a critique is coming, so it is not a
+clean single-pass baseline. And “changed the call” is not “improved the call” — nothing here measures
+whether the <code>hold</code> was right, which is precisely what the missing backtest (§7) would test.
+</p>
+
+<h3>5.3 · A silent data-integrity bug, and what finding it changed</h3>
+
+<p>
+The most consequential defect in this project produced no error, no degraded status and no failing
+test. It was found by reading <code>/ohlc</code> output and noticing that <b>every Sunday bar was an
+exact copy of the previous Thursday's</b>.
+</p>
+
+<p>
+The Tel Aviv Stock Exchange trades Sunday to Thursday, so the cleaning step reindexed each series onto
+that week — a rule taken from configuration. Checked against the live feed, <b>Yahoo Finance returns
+<code>.TA</code> daily bars on a Monday–Friday index with no Sunday sessions at all</b> (verified on
+<code>TEVA.TA</code>, <code>ICL.TA</code> and <code>POLI.TA</code>, all timestamped
+<code>Asia/Jerusalem</code>). Reindexing therefore did two things at once: it <b>discarded every real
+Friday bar</b>, and it <b>forward-filled a synthetic Sunday</b> from the preceding Thursday.
+</p>
+
+<table>
+  <tr><th style="width: 38%">Consequence on <code>TEVA.TA</code>, 180 days</th><th>Measured</th></tr>
+  <tr><td>Fabricated bars</td><td><b>35</b> of 177 rows — 34 of them Sundays</td></tr>
+  <tr><td>Share of the series that was synthetic</td><td><b>≈ 19%</b></td></tr>
+  <tr><td>Real trading sessions discarded</td><td><b>31</b> Fridays</td></tr>
+  <tr><td>Effect on indicators</td><td>each phantom carries a zero close-to-close return and a near-zero true range, which <b>deflates ATR</b>, <b>flattens RSI</b> and distorts the 8×-MAD outlier test</td></tr>
+  <tr><td>After the fix</td><td><b>0</b> fabricated bars; all 31 Fridays retained; 7 genuine mid-week holidays bridged. <code>AAPL</code> byte-identical — the US path was never affected</td></tr>
+</table>
+
+<p>
+<b>The fix removes the assumption rather than correcting it.</b> The session grid is now derived from
+the weekdays the source actually delivers, so no bar can be created on a weekday the feed never sends
+and no fetched row can be reindexed away — for any market or any future data source. The configured
+trading week is still compared against what arrived, and a mismatch is <i>reported</i> per symbol
+rather than silently absorbed.
+</p>
+
+<p>
+Two things about this are worth more than the fix itself. First, it contradicted the system's own
+central rule: a pipeline built to refuse inventing an earnings figure was quietly inventing a fifth of
+its price history. Guardrails hold where they are enforced, not where they are stated — the earnings
+path had a mechanism, the data path had only an assumption. Second, <b>the bug outlived its own
+repair</b>: the cache wrote with insert-or-replace, which can correct a row and add a row but never
+<i>retract</i> one, so the already-stored phantoms kept feeding the endpoints after the grid was
+fixed. A re-ingest is now authoritative for the window it covers. Both behaviours are pinned by tests
+that fail if either returns.
+</p>
+
+<div class="callout">
+  <span class="h">What is still unresolved, and deliberately so</span>
+  Whether those Friday <code>.TA</code> bars are genuine sessions, sessions labelled a day late, or a
+  feed artefact is <b>not known</b> — their volume runs consistently below the Monday–Thursday bars.
+  Rather than guess, the code now makes a narrower claim that holds under every reading: it invents
+  nothing and it discards nothing. An honest open question is worth more than a confident wrong answer,
+  which is the same principle the rest of the system applies to the LLM.
+</div>
+
+<h3>5.4 · Live behaviour, including under failure</h3>
 
 <p>
 A single-ticker chat run completes in about a minute for two to four cents, producing a four-page
 PDF and complete database rows. A mixed watchlist renders one report carrying per-market currencies
 and a market-grouped summary.
+</p>
+
+<p>
+The reference run behind the committed sample is <code>r_2026-08-16T12:53</code>: both markets in one
+pass, driven through the chat assistant, <b>245 seconds</b> and <b>$0.0686</b> across four agents, all
+three specialists reporting <code>ok</code>. It was verified against the persisted rows rather than
+the chat reply — one <code>runs</code> row (<code>mode = chat</code>), two <code>recommendations</code>
+rows each carrying draft, critique and final, <code>costs</code> rows per agent, and a seven-page PDF
+containing every block the design requires. On the US side the extractor committed
+<b>$109.4 billion</b> and <b>$2.02</b> from Apple's 8-K with all three samples agreeing, and refused
+<code>guidance</code> as <code>ambiguous</code> because the exhibit does not state it — the
+never-invent rule doing both of its jobs on live data rather than on a fixture.
 </p>
 
 <div class="callout">
@@ -335,7 +489,7 @@ and a market-grouped summary.
   while still lowering conviction. Failure, diagnosis and before/after evidence are in the history.
 </div>
 
-<h3>5.3 · The reasoning trace, as printed in the report</h3>
+<h3>5.5 · The reasoning trace, as printed in the report</h3>
 
 <p>
 Excerpts from one run's three passes for <code>NFLX</code>, after the fix described above. Each pass
@@ -376,6 +530,9 @@ is printed in full on the ticker's page.
   <li><b>News coverage is uneven.</b> Measured live: <code>TEVA.TA</code> returns 0 items in the default 3-day window against 47–49 for large US names. Auto-derived search terms also fail where a registered name differs from the press name (“Alphabet” vs “Google”, hand-curated).</li>
   <li><b>A model swap is not a no-op.</b> Models clear schema validation at different rates and the retry path is a different branch — swapping the earnings model surfaced a latent fan-in bug the previous one had masked.</li>
   <li><b>One open item.</b> The agreement rule counts a degraded agent in its three-agent denominator, so “1 of 3” may really be “1 of 2 measurable” — raised by the system's own critique pass during a live run.</li>
+  <li><b>Yahoo's Tel Aviv calendar does not match the real trading week, and the reason is unknown.</b> It returns <code>.TA</code> bars Monday–Friday for an exchange that trades Sunday–Thursday (§5.3). Ingestion now follows the feed's own calendar and reports the mismatch, so it invents no bar and discards none — but whether those Friday bars are real sessions, mislabelled ones, or an artefact is unresolved. Any TA-35 report generated before this fix understates its indicators; the committed sample was regenerated afterwards.</li>
+  <li><b>A guardrail is only as good as its enforcement point.</b> The never-invent rule was mechanised for earnings figures and merely assumed for price data — which is exactly where fabrication appeared. The lesson generalises to anything in this system not currently pinned by a test.</li>
+  <li><b>Sentiment coverage of TA-35 mid-caps is genuinely thin, not broken.</b> In the reference run <code>TEVA.TA</code> returned zero articles in the window with both scores at 0. The report prints the article count and pads nothing, and the critique names the gap as a reason for lower conviction without reading a direction into it — but a dual-sentiment split cannot inform a call that has no news to score.</li>
 </ul>
 
 <h2>7 · Future development</h2>
@@ -393,8 +550,11 @@ is printed in full on the ticker's page.
   <code>npm run dev</code> to start the quant service, n8n and the chat UI together; the six
   workflows are imported once through the n8n editor. Quick-start, evaluation reproduction and
   wiring details are in <a href="https://github.com/gilbarel1/algotrade-project/blob/main/README.md" style="color:#1a5f7a; text-decoration:underline"><code>README.md</code></a>; the complete technical design in
-  <a href="https://github.com/gilbarel1/algotrade-project/blob/main/docs/design.md" style="color:#1a5f7a; text-decoration:underline"><code>docs/design.md</code></a>; run walk-throughs in <a href="https://github.com/gilbarel1/algotrade-project/blob/main/docs/results.md" style="color:#1a5f7a; text-decoration:underline"><code>docs/results.md</code></a>; and the demo
+  <a href="https://github.com/gilbarel1/algotrade-project/blob/main/docs/design.md" style="color:#1a5f7a; text-decoration:underline"><code>docs/design.md</code></a>; run walk-throughs in <a href="https://github.com/gilbarel1/algotrade-project/blob/main/docs/results.md" style="color:#1a5f7a; text-decoration:underline"><code>docs/results.md</code></a>; the ablation
+  method and its caveats in <a href="https://github.com/gilbarel1/algotrade-project/blob/main/docs/ablations.md" style="color:#1a5f7a; text-decoration:underline"><code>docs/ablations.md</code></a>; and the demo
   outline in <a href="https://github.com/gilbarel1/algotrade-project/blob/main/docs/demo_script.md" style="color:#1a5f7a; text-decoration:underline"><code>docs/demo_script.md</code></a>.
+  This document is itself built from source — <code>npm run summary</code> renders
+  <code>docs/project_summary.html</code> to the committed PDF, so the two cannot drift.
 </div>
 
 </body>

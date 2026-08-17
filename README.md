@@ -43,6 +43,25 @@ thresholds live in `config/rubric.yaml` (design §3.4).
 
 ---
 
+### Start here
+
+| If you want to… | Go to |
+| --- | --- |
+| **Read the written analysis** — problem, architecture, results, ablations, caveats | **[`docs/project_summary.pdf`](docs/project_summary.pdf)** (8 pages) |
+| **See the output without running anything** | [`docs/samples/`](docs/samples/) — two real reports, committed |
+| **Run it yourself** | [Setup & quick start](#setup--quick-start) |
+| **Judge whether the AI techniques do anything** | [Design highlights](#design-highlights) · [`docs/ablations.md`](docs/ablations.md) |
+| **See the measured accuracy** | [Evaluation results](#evaluation-results) |
+| **Know what it can't do** | [Limitations](#limitations) |
+
+**Contents** — [How it works](#how-it-works) · [Prerequisites](#prerequisites) ·
+[Setup & quick start](#setup--quick-start) · [Everyday commands](#everyday-commands) ·
+[Configuration](#configuration) · [Design highlights](#design-highlights) ·
+[Evaluation results](#evaluation-results) · [Limitations](#limitations) ·
+[Further reading](#further-reading)
+
+---
+
 ## How it works
 
 Two layers joined by one HTTP boundary:
@@ -239,6 +258,7 @@ publish a workflow whose referenced sub-workflows are not themselves published.
 | `npm run eval`                                         | Evaluation harness ([below](#evaluation-results)) against `eval/*_labeled.jsonl`. `npm run eval -- --no-llm` runs the FinBERT/DictaBERT arm only (free). |
 | `npm run ablations`                                    | Ablation harness ([`docs/ablations.md`](docs/ablations.md)) — switches each AI technique off and re-scores. `-- --critique-only` mines the critique arm from DuckDB (free, no key). |
 | `npm run db:init`                                      | Create/repair the DuckDB schema.                                                                                                                         |
+| `npm run summary`                                      | Rebuild [`docs/project_summary.pdf`](docs/project_summary.pdf) from its HTML source (WeasyPrint).                                                        |
 | `npm run dev:service` / `dev:n8n` / `dev:frontend` | Just one process, for debugging.                                                                                                                         |
 
 `npm run ingest` accepts `-- --symbols TEVA.TA` and `-- --lookback-days 90`. Ingestion is also
@@ -496,6 +516,10 @@ any of them. Design [§13](docs/design.md) has the full detail and the reasoning
 
 ## Further reading
 
+- **[`docs/project_summary.pdf`](docs/project_summary.pdf)** — the written summary: the financial
+  problem, the architecture, the results and ablations, the data-integrity bug and what finding it
+  changed, and the risks. Built from [`project_summary.html`](docs/project_summary.html) with
+  `npm run summary`, so the PDF cannot drift from its source.
 - **[`docs/design.md`](docs/design.md)** — the full technical design: architecture, endpoint
   contracts, agent schemas, DuckDB tables, and parameters. The source of truth.
 - **[`docs/results.md`](docs/results.md)** — a walk-through of real runs end-to-end, with the
