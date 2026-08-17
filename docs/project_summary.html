@@ -120,7 +120,7 @@
   <div><b>6</b>n8n workflows<br>159 nodes</div>
   <div><b>4</b>specialist agents<br>3 run in parallel</div>
   <div><b>3</b>Risk Manager passes<br>draft → critique → final</div>
-  <div><b>112</b>offline tests<br>green in CI</div>
+  <div><b>148</b>offline tests<br>green in CI</div>
   <div><b>$0.02–0.07</b>per run<br>logged per agent</div>
 </div>
 
@@ -543,6 +543,7 @@ is printed in full on the ticker's page.
   <li><b>Scale the watchlist</b> to the full TA-35 and S&amp;P 500. The per-market architecture supports it today; a paid news tier is the binding constraint.</li>
   <li><b>Rubric refinements.</b> Resolve the degraded-denominator question, and consider a stronger Risk Manager model — a one-field change, with the cost table as arbiter.</li>
   <li><b>OCR fallback</b> for scanned disclosure PDFs, currently an honest <code>ambiguous</code>.</li>
+  <li><b>Settle the TASE calendar question (§5.3)</b> by reconciling Yahoo's <code>.TA</code> bars against the exchange's own published session data or a second vendor. The current behaviour is safe — it invents nothing and discards nothing — but “we don't know what those Friday bars are” is a gap in provenance, not a design choice, and a second source would close it.</li>
 </ul>
 
 <div class="footnote">
