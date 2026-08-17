@@ -237,6 +237,7 @@ publish a workflow whose referenced sub-workflows are not themselves published.
 | `npm run ingest`                                       | Pull the watchlist's OHLC into the`prices` cache (keyless — Yahoo Finance).                                                                           |
 | `npm run costs`                                        | Per-run LLM cost summary.                                                                                                                                |
 | `npm run eval`                                         | Evaluation harness ([below](#evaluation-results)) against `eval/*_labeled.jsonl`. `npm run eval -- --no-llm` runs the FinBERT/DictaBERT arm only (free). |
+| `npm run ablations`                                    | Ablation harness ([`docs/ablations.md`](docs/ablations.md)) — switches each AI technique off and re-scores. `-- --critique-only` mines the critique arm from DuckDB (free, no key). |
 | `npm run db:init`                                      | Create/repair the DuckDB schema.                                                                                                                         |
 | `npm run dev:service` / `dev:n8n` / `dev:frontend` | Just one process, for debugging.                                                                                                                         |
 
@@ -300,14 +301,31 @@ into both processes.
 ## Design highlights
 
 Four AI techniques go beyond baseline LLM calls. This is where the interesting engineering lives —
-each is deliberate, visible in the report, and measured by the [evaluation harness](#evaluation-results).
+each is deliberate, visible in the report, and **measured**: the last column is what happens when the
+technique is switched off, not what it is supposed to do.
 
-| Technique                                                               | Where                                    | What it adds                                                                                                                           |
-| ----------------------------------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| **Fine-tuned domain transformers** (FinBERT EN, DictaBERT HE)        | `/sentiment` endpoint, Sentiment Agent | An independent sentiment signal alongside the LLM; their disagreement becomes a first-class, reported feature.                         |
-| **Few-shot prompting from labeled JSONL**                         | Sentiment + Earnings agents              | Prompt engineering that is version-controlled (`prompts/`) and evaluable, not buried in a node.                                      |
-| **Self-consistency sampling** (n=3, temperature 0.3)              | Earnings number extraction               | Enforces "do not invent numbers"*by construction*: a figure commits only when ≥2 of 3 samples agree; otherwise it is `ambiguous`. |
-| **Multi-pass critique loop** (draft → devil's advocate → final) | Risk Manager                             | The recommendation visibly audits its own reasoning, which curbs overconfident calls.                                                  |
+| Technique                                                               | Where                                    | What it adds                                                                                                                           | Measured effect of removing it |
+| ----------------------------------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| **Fine-tuned domain transformers** (FinBERT EN, DictaBERT HE)        | `/sentiment` endpoint, Sentiment Agent | An independent sentiment signal alongside the LLM; their disagreement becomes a first-class, reported feature.                         | No second opinion at all — the dual-sentiment cap can never fire, and per-article splits like `L 0.15 / M −0.96` go unseen. |
+| **Few-shot prompting from labeled JSONL**                         | Sentiment + Earnings agents              | Prompt engineering that is version-controlled (`prompts/`) and evaluable, not buried in a node.                                      | Sentiment accuracy **90% → 77%**, MAE **0.12 → 0.20** — i.e. down to exactly what the *free* local transformer scores. |
+| **Self-consistency sampling** (n=3, temperature 0.3)              | Earnings number extraction               | Enforces "do not invent numbers"*by construction*: a figure commits only when ≥2 of 3 samples agree; otherwise it is `ambiguous`. | Invented figures **0 → 2**; invented rate **0% → 3%**; precision **1.00 → 0.92**. |
+| **Multi-pass critique loop** (draft → devil's advocate → final) | Risk Manager                             | The recommendation visibly audits its own reasoning, which curbs overconfident calls.                                                  | The draft *is* the ablation: **31%** of calls and **35%** of convictions changed, **9 downgrades / 0 upgrades**. |
+
+**The techniques are load-bearing, and that is measured, not asserted** — by a second harness,
+[`npm run ablations`](docs/ablations.md), that removes each one and re-scores:
+
+- **Self-consistency earns its 3× token cost.** Two of three individual samples each committed a
+  figure its source does not state; the vote caught both **because the samples disagreed with each
+  other**. Disagreement between draws *is* the signal that a number isn't really in the document — a
+  single-sample extractor has no access to it, and no way to know it was wrong.
+- **Few-shot is the LLM arm's entire margin.** Without the nine examples, the paid model lands at
+  77% — the same accuracy as the free FinBERT/DictaBERT arm it exists to disagree with.
+- **The critique loop has never once made the system more bullish.** Across every run on record it
+  moved 8 calls, all of them `long → hold`, and changed conviction 9 times, all downgrades. It is
+  also not a rubber stamp: in 19 of 26 cases the devil's advocate argued for a different call.
+
+Full method, the paired experimental design, and an honest account of what these numbers *don't*
+show (small samples; "changed" ≠ "improved") are in **[`docs/ablations.md`](docs/ablations.md)**.
 
 **Model assignments** (all via OpenRouter — a one-field swap to change any of them):
 
@@ -465,6 +483,8 @@ any of them. Design [§13](docs/design.md) has the full detail and the reasoning
   contracts, agent schemas, DuckDB tables, and parameters. The source of truth.
 - **[`docs/results.md`](docs/results.md)** — a walk-through of real runs end-to-end, with the
   reasoning trace and persisted data, plus the evaluation results.
+- **[`docs/ablations.md`](docs/ablations.md)** — each AI technique switched off and re-scored, so
+  their contribution is measured rather than claimed. Includes what the numbers don't show.
 - **[`docs/samples/`](docs/samples/)** — two reports the system actually produced, committed so you
   can read the output **without running the pipeline** (which needs API keys): one showing dual
   sentiment splitting a call, one showing a mixed TA-35 + S&P 500 watchlist in a single PDF.

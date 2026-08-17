@@ -756,7 +756,11 @@ algotrade-project/
 ├── prompts/  {sentiment_examples.jsonl, earnings_examples.jsonl,
 │              risk_manager_draft.md, risk_manager_critique.md, risk_manager_final.md,
 │              chat_assistant_system.md}   # §6.5 router-only system prompt
-├── eval/     {sentiment_labeled.jsonl, earnings_labeled.jsonl, chat_refusal_labeled.jsonl, run.py}
+├── eval/     {sentiment_labeled.jsonl, earnings_labeled.jsonl, chat_refusal_labeled.jsonl,
+│              run.py, ablations.py}
+│          # run.py = §9 agent scoring; ablations.py = removes each §7 technique and
+│          # re-scores it, so self-consistency / few-shot / the critique loop are
+│          # measured contributions rather than claims (docs/ablations.md)
 ├── config/   {universe.yaml, rubric.yaml}
 ├── tests/    {conftest.py, test_markets.py, test_ohlc_calendar.py, test_rubric_clamp.py,
 │              test_schemas.py, test_validate_endpoint.py, test_cost_log.py,
@@ -767,7 +771,7 @@ algotrade-project/
 │          # test_rubric_clamp.py runs the §3.4 rubric's own `jsCode` under Node, and
 │          # test_validate_endpoint.py asserts every `agent` key the workflows POST
 │          # is registered in the §5 /validate schema registry.
-├── scripts/  {setup,dev,doctor,eval,py,pyroot}.mjs, lib/env.mjs, sync_chat_prompt.py
+├── scripts/  {setup,dev,doctor,eval,ablations,py,pyroot}.mjs, lib/env.mjs, sync_chat_prompt.py
 │          # the `npm run …` entry points; lib/env.mjs resolves the venv and loads .env
 ├── .github/workflows/ci.yml            # ruff + tests on every push (no torch/Playwright/GTK)
 ├── reports/  # generated PDFs, gitignored

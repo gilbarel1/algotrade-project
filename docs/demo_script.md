@@ -236,6 +236,7 @@ talking on a full stop.
 | A degraded agent is not a signal | `prompts/risk_manager_*.md`; design §3.4 |
 | Cost logging | `npm run costs`; `costs` table; `quant_service/ops/cost_log.py` |
 | Evaluation | `npm run eval`; `eval/*_labeled.jsonl`; [`results.md`](results.md) |
+| The techniques are load-bearing | `npm run ablations`; [`ablations.md`](ablations.md) — each one switched off and re-scored |
 | Tests and CI | `npm run test` (148 offline tests); `.github/workflows/ci.yml` |
 | Data integrity over convenience | `quant_service/data/yahoo.py` (grid from the source); `tests/test_ohlc_calendar.py` |
 | Limitations | [design §13](design.md); the summary PDF §6 |
@@ -246,6 +247,16 @@ talking on a full stop.
   the self-consistency vote and the dual-sentiment split exist to prevent exactly that.
 - *"How do you know it isn't hallucinating numbers?"* — The extractor is measured: 22/22 absent
   figures marked `ambiguous`. It's a mechanism, not an instruction.
+- *"How do you know the fancy techniques are doing anything, and not just costing tokens?"* — The
+  strongest card in the deck: `npm run ablations` switches each one off and re-scores
+  ([`ablations.md`](ablations.md)). Drop the few-shot examples and sentiment falls **90% → 77%**,
+  which is exactly what the *free* local transformer scores — so the examples are the entire margin
+  the paid LLM contributes. Drop self-consistency and invented figures go **0 → 2**, and the reason is
+  the mechanism itself: two of three individual samples each invented a figure, and the vote caught
+  both *because the samples disagreed with each other*. The critique loop has moved 8 calls across
+  every run on record, all `long → hold`, with **9 conviction downgrades and 0 upgrades** — it has
+  never once made the system more confident. Be ready to concede the honest limit too: "changed the
+  call" is not "improved the call", and the samples are small.
 - *"What would you do next?"* — Backtest the recommendation stream against realized returns. Right
   now we measure reasoning quality, not alpha.
 - *"Did anything surprise you?"* — The best answer in the project, if asked. Yahoo returns `.TA` bars

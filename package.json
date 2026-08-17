@@ -20,7 +20,8 @@
     "db:init": "node scripts/py.mjs store_init.py",
     "ingest": "node scripts/py.mjs -m data.ingest",
     "costs": "node scripts/py.mjs -m ops.cost_report",
-    "eval": "node scripts/eval.mjs"
+    "eval": "node scripts/eval.mjs",
+    "ablations": "node scripts/ablations.mjs"
   },
   "dependencies": {
     "motion": "^12.42.2"
