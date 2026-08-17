@@ -276,9 +276,14 @@ The `costs` table is written on every LLM call, including the evaluation harness
 # A mixed watchlist is supported: *.TA symbols are TASE, bare symbols are US (see
 # `markets:` below). The live file ships a trimmed watchlist with the full TA-35
 # list commented out — expanding it is the intended scaling point (§1).
-watchlist: ["LUMI.TA"]
+watchlist: ["TEVA.TA", "AAPL"]   # one from each market, so a run exercises both
 news_window_minutes: 4320
-earnings_window_days: 5
+# 21, not 5. At 5 days both reference tickers returned ZERO disclosures despite each
+# having filed ~18 days earlier, so the Earnings Agent contributed nothing and the
+# self-consistency path never ran — a quarterly filing is material for longer than a
+# working week. Trade-off to know: a wider window makes `is_earnings_window` true more
+# often, which fires the §3.4 earnings-event cap and ceilings conviction at `medium`.
+earnings_window_days: 21
 earnings_candidates: 3   # disclosures classified per ticker; most material wins (§3.2)
 ohlc_lookback_days: 180
 
