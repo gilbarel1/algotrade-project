@@ -237,6 +237,7 @@ talking on a full stop.
 | Cost logging | `npm run costs`; `costs` table; `quant_service/ops/cost_log.py` |
 | Evaluation | `npm run eval`; `eval/*_labeled.jsonl`; [`results.md`](results.md) |
 | The techniques are load-bearing | `npm run ablations`; [`ablations.md`](ablations.md) — each one switched off and re-scored |
+| Disagreement as the uncertainty signal | README "One idea, applied at three scales" — sample vs. sample, model vs. model, pass vs. pass |
 | Tests and CI | `npm run test` (148 offline tests); `.github/workflows/ci.yml` |
 | Data integrity over convenience | `quant_service/data/yahoo.py` (grid from the source); `tests/test_ohlc_calendar.py` |
 | Limitations | [design §13](design.md); the summary PDF §6 |
@@ -245,6 +246,12 @@ talking on a full stop.
 
 - *"Why not one prompt?"* — It would invent figures and hide uncertainty. Both are demonstrable:
   the self-consistency vote and the dual-sentiment split exist to prevent exactly that.
+- *"Is there a single design idea behind all of this?"* — Yes, and it's the best answer to give:
+  **an LLM can't be trusted to report its own uncertainty, so uncertainty is derived from
+  disagreement between independent attempts.** Three scales — samples disagreeing (→ `ambiguous`),
+  models disagreeing (→ conviction capped), passes disagreeing (→ call downgraded). The system never
+  asks a model "how confident are you?", which is exactly the question that got HeBERT a 0.998
+  confidence on a wrong answer.
 - *"How do you know it isn't hallucinating numbers?"* — The extractor is measured: 22/22 absent
   figures marked `ambiguous`. It's a mechanism, not an instruction.
 - *"How do you know the fancy techniques are doing anything, and not just costing tokens?"* — The

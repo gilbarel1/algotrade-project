@@ -304,6 +304,23 @@ Four AI techniques go beyond baseline LLM calls. This is where the interesting e
 each is deliberate, visible in the report, and **measured**: the last column is what happens when the
 technique is switched off, not what it is supposed to do.
 
+### One idea, applied at three scales
+
+The techniques below aren't a grab-bag. They are the same principle three times over: **an LLM cannot
+be trusted to report its own uncertainty, so uncertainty is derived from disagreement between
+independent attempts** — never from the model's own confidence, which it will happily state at 0.998
+while being wrong.
+
+| Scale | What disagrees | What the disagreement produces |
+| --- | --- | --- |
+| **Within one model** | 3 samples of the same extraction prompt (temp 0.3) | Figures that don't survive a majority → **`ambiguous`**, never a number |
+| **Between two models** | an LLM vs. a fine-tuned transformer on the same headline | Split above 0.3 → **conviction capped** at medium, and both scores printed |
+| **Between two passes** | a draft vs. a devil's advocate attacking it | Objections that hold → **call downgraded**, all three passes printed |
+
+At no point does the system ask a model "how sure are you?" — the question that produced HeBERT's
+0.998-confidence wrong answer, and the reason it was replaced. Confidence is *earned* by surviving an
+independent challenge, and the [ablations](docs/ablations.md) show all three challenges have teeth.
+
 | Technique                                                               | Where                                    | What it adds                                                                                                                           | Measured effect of removing it |
 | ----------------------------------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | --- |
 | **Fine-tuned domain transformers** (FinBERT EN, DictaBERT HE)        | `/sentiment` endpoint, Sentiment Agent | An independent sentiment signal alongside the LLM; their disagreement becomes a first-class, reported feature.                         | No second opinion at all — the dual-sentiment cap can never fire, and per-article splits like `L 0.15 / M −0.96` go unseen. |
