@@ -417,8 +417,10 @@ any of them. Design [§13](docs/design.md) has the full detail and the reasoning
   the Mon–Thu bars. The guarantee the code makes is narrower and checkable: it never invents a bar
   and never discards one. Before this was found, the Sun–Thu grid dropped every real Friday and
   forward-filled a synthetic Sunday, making ~19% of a TASE series duplicate rows — which deflated
-  ATR and flattened RSI on the primary market. Indicator values for TA-35 names in any report
-  generated before that fix are understated accordingly.
+  ATR and flattened RSI on the primary market. Any TA-35 report generated before that fix understates
+  its indicators accordingly; the committed
+  [mixed-watchlist sample](docs/samples/sample-report-mixed-watchlist.pdf) was regenerated afterwards
+  and is clean.
 
 **Earnings extraction**
 

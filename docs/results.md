@@ -87,11 +87,11 @@ One run, two markets, one PDF.
 📄 **[`samples/sample-report-mixed-watchlist.pdf`](samples/sample-report-mixed-watchlist.pdf)**
 
 ```
-runs             run_id = r_2026-08-03T07:08 · mode = chat · status = degraded
-                 tickers = ["TEVA.TA", "AAPL"] · report = reports/2026-08-03/1011/report.pdf
-                 181 seconds end to end
-recommendations  TEVA.TA → hold · low        AAPL → hold · low
-agent_status     both: {"sentiment": "degraded", "earnings": "ok", "technical": "ok"}
+runs             run_id = r_2026-08-16T12:53 · mode = chat · status = ok
+                 tickers = ["TEVA.TA", "AAPL"] · report = reports/2026-08-16/1557/report.pdf
+                 245 seconds end to end
+recommendations  TEVA.TA → hold · low        AAPL → long · medium
+agent_status     both: {"sentiment": "ok", "earnings": "ok", "technical": "ok"}
 ```
 
 The executive summary groups by market, and each ticker page carries its own market and currency,
@@ -99,9 +99,13 @@ so a figure can never be read in the wrong unit:
 
 ```
 Market  Currency  Calls          TEVA.TA  HOLD low conviction   TASE · ILS
-TASE    ILS       HOLD 1         AAPL     HOLD low conviction   US · USD
-US      USD       HOLD 1
+TASE    ILS       HOLD 1         AAPL     LONG medium conviction   US · USD
+US      USD       LONG 1
 ```
+
+> This run was driven through the **chat assistant** (`mode = chat`) by asking it to analyze both
+> names at once — the assistant resolved them, called the orchestrator once with both tickers, and
+> relayed the Risk Manager's calls without adding a view of its own.
 
 Earnings routed per market without the agent knowing anything about it — Teva to **Maya**, Apple to
 **SEC EDGAR** — because only the *fetch source* varies by market (§3.2); everything downstream is
@@ -126,23 +130,53 @@ Teva's panel is the contrasting case: a 10-Q was classified high-materiality, bu
 back `ambiguous` — its excerpt is windowed statement tables rather than a press release, exactly the
 weaker extraction source §3.2 describes.
 
-### Degradation, handled honestly
+### The critique overturning the call — a reasoning error, caught
 
-Sentiment degraded on both tickers (a rejected news API key at the time). The final pass dismissed
-the critique's attempt to read meaning into it:
+This is the run's best moment, and it is the argument for the whole three-pass design. On **TEVA.TA**
+the draft opened bullish:
 
-> *"a degraded agent (API failure) is neutral by definition and counts for neither side; its absence
-> is not evidence of bearish sentiment, only a measurement gap."*
+> **Draft — `long`, medium.** *"Agreement count for bullish direction is 2 of 3 (technical and
+> earnings-neutral both align bullish…)."*
 
-That rule exists because an earlier build did the opposite — it argued that silence was itself
-bearish. See §3.4 and the note in [`design.md`](design.md).
+The devil's advocate did not quibble with the conclusion; it attacked the **arithmetic behind it**:
+
+> **Critique — counters `hold`.** *"Agreement count of 2-of-3 is misleading: technical is bullish,
+> earnings is neutral (not bullish), and sentiment is absent. Neutral earnings provide zero
+> directional conviction — they are a placeholder, not a vote. True agreement is 1-of-3."*
+> And on the technicals: *"RSI at 67.8 and price at upper Bollinger Band are **overbought**
+> conditions, not strength… these are exhaustion signals in a vacuum of sentiment support."*
+
+The final pass conceded, in writing, and the call changed:
+
+> **Final — `hold`, low.** *"The agreement count of 1-of-3 is the correct reading… The draft's claim
+> of 2-of-3 agreement by counting neutral earnings as bullish-aligned is a **miscount**."*
+
+A single-pass pipeline would have shipped `long / medium` on a miscounted rubric. The critique caught
+it, the final owned it, and all three passes are printed in the PDF so a reader can audit the
+reversal rather than take it on trust.
+
+**AAPL shows the opposite outcome — the critique heard and rejected.** Its dual-sentiment split was
+LLM **0.6** vs model **0.194** (disagreement **0.4061**, over the 0.3 threshold), so the cap fired and
+ceilinged conviction at medium. The critique pushed for `hold`; the final kept `long` but conceded the
+split explicitly: *"the dual-sentiment cap applies, and the LLM/model split does reflect some
+uncertainty… this is explicitly noted and constrains conviction to medium per the rubric."* Disagreeing
+with the critique is allowed — doing so silently is not.
+
+### Thin coverage, reported rather than padded
+
+Teva's sentiment came back `ok` with **zero articles** — *"No recent coverage in the last 4320m"* —
+both scores 0. That is the TA-35 mid-cap coverage limit doing exactly what the README says it does:
+the count is printed and nothing is invented to fill it. The critique then named the gap as a reason
+for *lower conviction* without reading a direction into it, which is the §3.4 rule holding under a
+real absence rather than a simulated one.
 
 | Agent | Model | In / out tokens | USD |
 |---|---|---|---|
-| Earnings | `x-ai/grok-4.3` | 23,992 / 4,671 | $0.0417 |
-| Risk Manager (×3 passes, ×2 tickers) | `anthropic/claude-haiku-4.5` | 15,728 / 2,250 | $0.0270 |
-| Technical | `google/gemini-2.5-flash-lite` | 556 / 119 | $0.0001 |
-| **Total** | | | **$0.0687** |
+| Earnings | `x-ai/grok-4.3` | 24,003 / 4,776 | $0.0419 |
+| Risk Manager (×3 passes, ×2 tickers) | `anthropic/claude-haiku-4.5` | 13,120 / 2,310 | $0.0247 |
+| Sentiment | `anthropic/claude-haiku-4.5` | 865 / 206 | $0.0019 |
+| Technical | `google/gemini-2.5-flash-lite` | 560 / 126 | $0.0001 |
+| **Total** | | | **$0.0686** |
 
 Earnings dominates because each ranked candidate carries a multi-thousand-character excerpt, and the
 winner's is re-sent once per self-consistency sample.
