@@ -334,8 +334,15 @@ The harness scores each agent against hand-labeled fixtures (`eval/*_labeled.jso
 one-page summary. Reproduce with `npm run eval` (needs the service running and an OpenRouter key;
 `-- --no-llm` runs the free transformer arm only).
 
+**These numbers reproduce.** The block below is a fresh run, eleven days after the one it replaced,
+and **every metric came back identical** — accuracy, MAE, Pearson r, macro-F1, precision/recall, and
+the router's 4/4 and 3/3. Only the run id and the cost moved ($0.1155 vs $0.1138, from a 676-token
+difference in the earnings arm). That is the point of pinning the fixtures and setting
+`temperature=0` outside the self-consistency sampler: the one number that *should* wander is the
+extractor's, and it is reported honestly below rather than averaged into the rest.
+
 ```
-Evaluation summary  (eval-20260806-122029)
+Evaluation summary  (eval-20260817-060223)
 Sentiment: 30 items (20 EN, 10 HE)   Earnings: 10 disclosures   Chat: 7 router cases
 
 Agent                         Dataset             Metrics
@@ -349,7 +356,7 @@ Earnings (classifier)         earnings_labeled    macro-F1(kind) 1.00 | material
 Earnings (extractor)          earnings_labeled    precision 1.00 | recall 1.00 | ambiguous-when-absent 22/22  [grok]
 Chat router (§6.5)            chat_refusal        refusal 4/4 | routing 3/3 | no fabrication  [haiku]
 ------------------------------------------------------------------------------
-LLM cost (this run): $0.1138   (chat 11,872 tok, earnings 47,183 tok, sentiment 5,337 tok)
+LLM cost (this run): $0.1155   (chat 11,872 tok, earnings 47,859 tok, sentiment 5,337 tok)
 ```
 
 **The transformer arm is reported per language**, because it is two different models and the mean
@@ -367,8 +374,8 @@ anything, so the old figure was largely measuring noise.
 **On the earnings extractor, and what "never invent numbers" actually buys you.** That row scores
 whether a figure is committed *only* when the source states it verbatim. The mechanism is
 self-consistency: three samples at temperature 0.3, committed on a majority. Because it samples, it
-is **not deterministic**. Measured across three runs it scored **22/22, then 21/22, then 22/22** —
-so in one of the three, a single field was committed that its source does not state. The honest
+is **not deterministic**. Measured across four runs it scored **22/22, 21/22, 22/22, 22/22** —
+so in one of the four, a single field was committed that its source does not state. The honest
 claim is that self-consistency *sharply reduces* invented figures and makes the remainder visible
 and measurable — not that it eliminates them. A single-sample extractor has no such guard at all,
 and no way to know how often it is wrong.
@@ -393,7 +400,7 @@ any of them. Design [§13](docs/design.md) has the full detail and the reasoning
   results](#evaluation-results) report the arms per language rather than hiding the gap in a mean.
 - **Self-consistency reduces invented figures; it does not eliminate them.** Extraction samples three
   times at temperature 0.3 and commits on a majority, so it is stochastic: measured runs have scored
-  `ambiguous`-when-absent at 22/22, 21/22 and 22/22 across three runs. The one miss is a figure
+  `ambiguous`-when-absent at 22/22, 21/22, 22/22 and 22/22 across four runs. The one miss is a figure
   committed that its source does not state. The guard is a large improvement over a single sample — and, unlike a single
   sample, it is measurable — but it is not a proof.
 - **A derived search term is weaker than a hand-tuned one.** So that any S&P 500 name works without

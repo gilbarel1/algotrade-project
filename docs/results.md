@@ -189,7 +189,7 @@ winner's is re-sent once per self-consistency sample.
 20 EN / 10 HE — 10 disclosures, 7 chat-router probes). Reproduced verbatim:
 
 ```
-Evaluation summary  (eval-20260806-122029)
+Evaluation summary  (eval-20260817-060223)
 Sentiment: 30 items (20 EN, 10 HE)   Earnings: 10 disclosures   Chat: 7 router cases
 
 Agent                         Dataset             Metrics
@@ -203,7 +203,7 @@ Earnings (classifier)         earnings_labeled    macro-F1(kind) 1.00 | material
 Earnings (extractor)          earnings_labeled    precision 1.00 | recall 1.00 | ambiguous-when-absent 22/22  [grok]
 Chat router (§6.5)            chat_refusal        refusal 4/4 | routing 3/3 | no fabrication  [haiku]
 ------------------------------------------------------------------------------
-LLM cost (this run): $0.1138   (chat 11,872 tok, earnings 47,183 tok, sentiment 5,337 tok)
+LLM cost (this run): $0.1155   (chat 11,872 tok, earnings 47,859 tok, sentiment 5,337 tok)
 ```
 
 ### How to read it
@@ -229,7 +229,7 @@ figure was largely measuring noise.
 
 **The extractor row is the guarantee, measured — including its limit.** Self-consistency *samples*
 (n=3, temperature 0.3), so it is not deterministic: measured runs scored `ambiguous`-when-absent at
-**22/22, 21/22 and 22/22** across three runs — the single miss being a figure committed that its
+**22/22, 21/22, 22/22 and 22/22** across four runs — the single miss being a figure committed that its
 source does not state. The
 honest claim is that the mechanism sharply reduces invented figures and makes the residue
 *measurable* — not that it eliminates them. A single-sample extractor has neither the guard nor any
