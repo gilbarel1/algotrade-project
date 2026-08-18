@@ -1,10 +1,5 @@
 # Demo shot list — 4:40 target (assignment allows 3–5 min)
 
-> **Presenting instead of recording?** [`defense_deck.pptx`](defense_deck.pptx) is a 10-slide deck
-> built from the summary document, with speaker notes on every slide. Slides 4 (*uncertainty from
-> disagreement*) and 6 (*do the techniques earn their cost?*) are the ones that carry the argument —
-> if you run long, cut slide 9 and compress 3, not those two.
-
 Nine shots. Each one names the window, the action, the words, and what must be visible for the
 shot to count. Everything else is cut.
 
