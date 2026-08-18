@@ -42,6 +42,24 @@ curl -s http://127.0.0.1:8000/health && curl -s http://127.0.0.1:8001/health && 
 
 The front end must report `"webhook_configured": true`. All six n8n workflows must be **published**
 (the four agents first, then the orchestrator, then the chat assistant — n8n refuses otherwise).
+An unpublished orchestrator does not error loudly: the chat assistant just replies that the backend
+is unavailable, which looks like your system is broken on camera.
+
+> **Publishing the orchestrator also arms `schedule_cron`** (top of every hour, 10:00–23:00). Harmless
+> during a recording, but **deactivate it afterwards** or unattended scheduled runs will keep spending
+> OpenRouter credit.
+
+**2b · Check the earnings window, or shot 6 has nothing to show.** `earnings_window_days` in
+`config/universe.yaml` must be wide enough to catch the last quarterly filing — it is `21`. At the old
+value of `5`, **both** demo tickers returned *zero* disclosures despite each having filed ~18 days
+earlier, so the Earnings Agent contributes nothing and the self-consistency beat silently disappears.
+Verify before recording:
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/earnings/fetch -H "Content-Type: application/json" -d "{\"ticker\":\"AAPL\"}"
+```
+
+Expect a non-empty `items` array. If it is empty, widen the window rather than discovering it in shot 6.
 
 **3 · Pre-warm.** Run one throwaway chat query before recording. The first `/sentiment` call loads
 FinBERT + DictaBERT (tens of seconds) and the first Maya scrape is uncached — you do not want either
@@ -206,6 +224,15 @@ rather than hiding it."
 the biggest gap and the obvious next step. Coverage of smaller Tel Aviv names is thin, Hebrew
 sentiment is a general model, and scraping is best-effort. But every failure degrades to `ambiguous`
 or `degraded` — never to a fabricated number. That was the design goal."
+
+**If you have ten seconds left, land this — it is the strongest closing claim you have:**
+"And these techniques aren't decoration — we measured them. Turn off the few-shot examples and
+sentiment drops to exactly what the free local model scores. Turn off self-consistency and invented
+figures appear. The critique loop has never once made the system more confident."
+
+> Why this closes well: the rest of the demo *shows* the system working. This is the only line that
+> proves the design choices were **necessary** rather than merely present — which is the difference
+> between a working project and a considered one.
 
 **End on:** the report's methodology footer or the architecture diagram. Don't trail off — stop
 talking on a full stop.
