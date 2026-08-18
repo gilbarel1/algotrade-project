@@ -1,8 +1,9 @@
 # Results — two runs, end to end
 
-Two real runs, taken apart. The first shows the dual-sentiment mechanism deciding an outcome; the
-second shows a mixed TA-35 + S&P 500 watchlist and the "never invent numbers" guarantee doing both
-of its jobs at once. Then the evaluation-harness output, reproduced verbatim.
+Two real runs, taken apart. The first is **the run shown in the demo video** — two US names, the
+dual-sentiment split at its most extreme, and the critique overturning the call. The second shows a
+mixed TA-35 + S&P 500 watchlist and the "never invent numbers" guarantee doing both of its jobs at
+once. Then the evaluation-harness output, reproduced verbatim.
 
 Both reports are committed at [`samples/`](samples/) so they can be read without running the
 pipeline (a full run needs API keys). Companion to [`../README.md`](../README.md) and the design in
@@ -10,73 +11,84 @@ pipeline (a full run needs API keys). Companion to [`../README.md`](../README.md
 
 ---
 
-## Run 1 — "what do you think about Netflix?"
+## Run 1 — "what do you think about Apple and Netflix?"
 
 Started from the **chat assistant** (<http://localhost:8001>), hence `mode = chat`. The assistant
-resolved *Netflix* → `NFLX`, saw the bare symbol, routed it to the **US** market, and ran the same
-pipeline a manual or scheduled run uses.
+resolved *Apple* → `AAPL` and *Netflix* → `NFLX`, saw bare symbols, routed both to the **US** market,
+and ran the same pipeline a manual or scheduled run uses. **This is the run shown in the demo video.**
 
 📄 **[`samples/sample-report-dual-sentiment.pdf`](samples/sample-report-dual-sentiment.pdf)**
 
 ```
-runs             run_id = r_2026-08-06T11:39 · mode = chat · status = ok
-                 tickers = ["NFLX"] · report = reports/2026-08-06/1441/report.pdf
-                 121 seconds end to end
-recommendations  NFLX → hold · low
-agent_status     {"sentiment": "ok", "earnings": "ok", "technical": "ok"}
+runs             run_id = r_2026-08-09T08:50 · mode = chat · status = ok
+                 tickers = ["AAPL", "NFLX"] · report = reports/2026-08-09/1151/report.pdf
+recommendations  AAPL → hold · low        NFLX → hold · low
+agent_status     both: {"sentiment": "ok", "earnings": "ok", "technical": "ok"}
 ```
 
-### 1 · Dual sentiment, and a disagreement that changes the answer
+### 1 · Dual sentiment, at its most extreme
 
-The Sentiment Agent scored 11 live headlines **twice** — once by Haiku 4.5, once by FinBERT:
+Apple is the clearest case this system has produced. The Sentiment Agent scored live headlines
+**twice** — once by Haiku 4.5, once by FinBERT:
 
 | | |
 |---|---|
-| `llm_sentiment` | **0.0318** |
-| `model_sentiment` | **0.1478** |
-| `disagreement` | **0.3832** → `⚠ split` |
+| `llm_sentiment` | **0.35** |
+| `model_sentiment` | **−0.95** |
+| `disagreement` | **1.30** → `⚠ split` |
 
-Both are nominally positive, but they disagree by more than the §3.4 threshold of 0.30, so the
-**dual-sentiment cap fires** and ceilings conviction. The report prints the split rather than
-averaging it away.
+Not a rounding difference — the two scorers landed on **opposite poles**, and the reason is legible
+in the coverage itself. Apple had just beaten on revenue and EPS, and the stock fell 10% anyway. The
+LLM read the fundamentals and scored the news bullish; the finance-tuned model read the *language* of
+the coverage — *"Why Apple's 10% Drop Fails to Tell the Whole Story"* — and scored it strongly
+bearish. Both readings are defensible. The report prints both, flags the split, and lets the
+**dual-sentiment cap** ceiling conviction rather than averaging the two into a meaningless ~−0.3.
 
-The aggregate understates how far apart the two scorers can be. One citation on the ticker page:
+Netflix on the same page shows the milder version — `disagreement 0.39`, still over the 0.30
+threshold — with five cited articles carrying their own per-article splits, including
+**"3 Big Reasons to Love Netflix (NFLX)"** at **L 0.15 / M −0.96**, a gap of 1.11 on a single
+headline. Each is printed with its source so a reader can go and judge for themselves.
 
-> **"3 Big Reasons to Love Netflix (NFLX)"** — Biztoc · **L 0.15 / M −0.96**
+### 2 · The three-pass critique, overturning the call
 
-The LLM read the headline's framing as mildly positive; the finance-tuned model read the language as
-strongly negative — a **per-article gap of 1.11**, printed with its source link so a reader can go
-and judge for themselves. This is the argument for scoring twice, in one line.
+On Apple the loop does the thing it exists to do — it changes the answer:
 
-### 2 · The three-pass critique, arguing against itself
+- **Draft — `long`, medium.** *"Sentiment is bullish with a strong signal (LLM sentiment 0.35 despite
+  model disagreement)… Agreement count for bullish direction is 2 of 3."*
+- **Devil's-advocate critique — counters `hold`, with five objections.** It goes straight at the
+  weakest joint: *"Extreme model-LLM disagreement (1.3 spread), market's 10% rejection of strong
+  fundamentals, and negative MACD trend create too much friction for medium conviction. Only 1 truly
+  strong signal (sentiment) with material internal conflict."*
+- **Final — `hold`, low.** It concedes, in writing, and names the cap that bound it: *"the extreme
+  model-LLM disagreement (1.3022 spread) and the `dual_sentiment` cap require explicit acknowledgment
+  that confidence in this signal is materially undermined… the weight of the critique objections — all
+  of which hold up under scrutiny — push conviction to low."*
 
-- **Draft — `hold`, low.** *"All three agents report neutral directions… Agreement count is 1-of-3
-  at best for any directional candidate, triggering the mandatory hold rule."*
-- **Devil's-advocate critique — counters `short`, with five objections.** It does not rubber-stamp:
-  *"RSI at 47.85 is not neutral — it is below 50, biased toward weakness; combined with MACD
-  structure, this is a sell-on-rally setup, not a hold."* And on the split itself: *"Disagreement at
-  0.38 masks a split: model_sentiment 0.1478 vs llm_sentiment 0.0318 suggests LLM sees material
-  downside risk that model underweights."*
-- **Final — `hold`, low.** It answers each objection and declines the counter, on the rubric rather
-  than on instinct: *"these observations do not constitute a strong bearish signal: the rubric
-  confirms `has_strong_bearish` is false, and a short requires strong bearish evidence per §3.4…
-  The sentiment disagreement (0.38) between LLM and model is real and noted via the dual_sentiment
-  cap, which limits conviction to low."*
+A single-prompt pipeline would have shipped `long / medium` on a bullish earnings beat. The critique
+caught that the entire bullish case rested on one signal which was itself internally split, and the
+final downgraded on the record.
 
-A single-prompt pipeline emits one confident answer. Here the reasoning is stress-tested by a pass
-whose only job is to attack it, and the final call has to survive that in writing.
+Apple's page also carries the extracted 8-K figures — **$109.4 billion** and **$2.02** at `×3`, with
+`guidance` refused as `ambiguous`. That mechanism gets its own walk-through under Run 2 below, where
+the extraction actually ran.
 
 ### 3 · What it cost
 
 | Agent | Model | In / out tokens | USD |
 |---|---|---|---|
-| Risk Manager (×3 passes) | `anthropic/claude-haiku-4.5` | 7,446 / 1,410 | $0.0145 |
-| Sentiment | `anthropic/claude-haiku-4.5` | 1,890 / 1,044 | $0.0071 |
-| Technical | `google/gemini-2.5-flash-lite` | 272 / 66 | $0.0001 |
-| **Total** | | | **$0.0217** |
+| Risk Manager (×3 passes, ×2 tickers) | `anthropic/claude-haiku-4.5` | 16,152 / 2,673 | $0.0295 |
+| Sentiment | `anthropic/claude-haiku-4.5` | 2,539 / 1,138 | $0.0082 |
+| Technical | `google/gemini-2.5-flash-lite` | 545 / 128 | $0.0001 |
+| **Total** | | | **$0.0379** |
 
-Earnings has no row: NFLX had no disclosure inside the 5-day window, so the agent returned "no
-recent disclosure" without making a single LLM call. Cheap by construction, not by luck.
+Two tickers, both markets' worth of reasoning, **84 seconds** end to end.
+
+**Earnings has no row, and that is the interesting part.** Neither ticker had a disclosure inside the
+5-day window, so the agent made **zero LLM calls** — the panel reports `no window` honestly. The
+`×3` figures on Apple's page are the last extraction it committed, persisted in the `earnings` table
+from an earlier run rather than re-derived here. Nothing is re-paid for, and nothing is re-invented:
+a figure that was verified verbatim stays verified, and the window that is empty says so. (The
+window is `21` days now — §4.4 records why, and what it costs.)
 
 ---
 

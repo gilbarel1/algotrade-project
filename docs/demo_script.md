@@ -95,12 +95,13 @@ does everything needing a real library — indicators, transformers, PDF. No ML 
 
 ### Shot 2 — Start a live run · 0:25–0:55 · `http://localhost:8001`
 
-**Do:** type **"what do you think about Netflix?"** and hit send. Leave it running — it fills the
+**Do:** type **"what do you think about Apple and Netflix?"** and hit send. Leave it running — it fills the
 next two shots.
 
-**Say while it spins:** "This is a router, not an analyst. It resolves 'Netflix' to NFLX, sees a US
-ticker, and calls the same pipeline a scheduled run uses. It has no analytical authority — ask it
-for a price target and it refuses, because the number would have to come from somewhere."
+**Say while it spins:** "This is a router, not an analyst. It resolves 'Apple' and 'Netflix' to AAPL
+and NFLX, sees bare symbols, routes both to the US market, and calls the same pipeline a scheduled
+run uses. It has no analytical authority — ask it for a price target and it refuses, because the
+number would have to come from somewhere."
 
 **Must be visible:** your question, and the pending state.
 
