@@ -785,7 +785,7 @@ algotrade-project/
 ├── reports/  # generated PDFs, gitignored
 ├── docs/     {design.md, results.md, ablations.md, demo_script.md, architecture.svg,
 │              acceptance_checklist.md, sp500_integration_plan.md,
-│              project_summary.{html,pdf}, screenshots/, samples/}
+│              project_summary.{html,pdf}, defense_deck.pptx, screenshots/, samples/}
 │          # samples/ = two committed PDFs the system produced; project_summary.* = the
 │          # graded written summary, PDF built from the HTML by scripts/build_summary.py
 ├── README.md

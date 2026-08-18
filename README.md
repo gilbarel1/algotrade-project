@@ -530,6 +530,8 @@ any of them. Design [§13](docs/design.md) has the full detail and the reasoning
   can read the output **without running the pipeline** (which needs API keys): one showing dual
   sentiment splitting a call, one showing a mixed TA-35 + S&P 500 watchlist in a single PDF.
 - **[`docs/demo_script.md`](docs/demo_script.md)** — a 5-minute demo outline.
+- **[`docs/defense_deck.pptx`](docs/defense_deck.pptx)** — a 10-slide presentation built from the
+  summary document, with speaker notes on every slide.
 - **[`docs/sp500_integration_plan.md`](docs/sp500_integration_plan.md)** — how the mixed
   TA-35 + S&P 500 market abstraction was added.
 - **[`n8n/README_credentials.md`](n8n/README_credentials.md)** — the detailed n8n import and
